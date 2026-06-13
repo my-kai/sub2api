@@ -185,8 +185,11 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAdminSettingsStore, useAppStore, useAuthStore, useOnboardingStore } from '@/stores'
 import VersionBadge from '@/components/common/VersionBadge.vue'
+import { findCustomImagegenRoute } from '@/custom/imagegen/routes'
+import { findCustomModelMarketplaceRoute } from '@/custom/modelMarketplace/routes'
 import { sanitizeSvg } from '@/utils/sanitize'
 import { FeatureFlags, makeSidebarFlag } from '@/utils/featureFlags'
+import { useImageGenerationStatus } from '@/custom/imagegen/composables/useImageGenerationStatus'
 
 interface NavItem {
   path: string
@@ -232,6 +235,7 @@ const appStore = useAppStore()
 const authStore = useAuthStore()
 const onboardingStore = useOnboardingStore()
 const adminSettingsStore = useAdminSettingsStore()
+const imageGenerationStatus = useImageGenerationStatus()
 
 const sidebarCollapsed = computed(() => appStore.sidebarCollapsed)
 const mobileOpen = computed(() => appStore.mobileOpen)
@@ -628,6 +632,21 @@ const PriceTagIcon = {
     )
 }
 
+const SparklesIcon = {
+  render: () =>
+    h(
+      'svg',
+      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
+      [
+        h('path', {
+          'stroke-linecap': 'round',
+          'stroke-linejoin': 'round',
+          d: 'M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z'
+        })
+      ]
+    )
+}
+
 const ChevronDownIcon = {
   render: () =>
     h(
@@ -653,12 +672,13 @@ const flagAffiliate = makeSidebarFlag(FeatureFlags.affiliate)
 const flagRiskControl = makeSidebarFlag(FeatureFlags.riskControl)
 const flagOpsMonitoring = () => adminSettingsStore.opsMonitoringEnabled
 const flagAdminPayment = () => adminSettingsStore.paymentEnabled
+const flagCustomImageGeneration = () => imageGenerationStatus.enabled.value
 
 // buildSelfNavItems 构造用户自己的导航项（用户端主菜单和管理员的"我的账户"子菜单共享这组声明）。
 // withDashboard=true 时包含仪表盘（用户端），false 时不含（管理员的个人区已经有独立仪表盘入口）。
 //
-// 条目顺序：密钥 → 用量 → 可用渠道 → 渠道状态 → 订阅/支付 → 兑换/资料。
-// 可用渠道紧挨渠道状态之上，让用户"先看自己能用什么、再看对应状态"。
+// 条目顺序：密钥 → 用量 → 模型广场 → 渠道状态 → 订阅/支付 → 兑换/资料。
+// 旧版“可用渠道”保留路由直达能力，但不再暴露在菜单中；用户侧统一从模型广场查看可用模型。
 function buildSelfNavItems(withDashboard: boolean): NavItem[] {
   const items: NavItem[] = []
   if (withDashboard) {
@@ -667,8 +687,11 @@ function buildSelfNavItems(withDashboard: boolean): NavItem[] {
   items.push(
     { path: '/keys', label: t('nav.apiKeys'), icon: KeyIcon },
     { path: '/usage', label: t('nav.usage'), icon: ChartIcon, hideInSimpleMode: true },
-    { path: '/available-channels', label: t('nav.availableChannels'), icon: ChannelIcon, hideInSimpleMode: true, featureFlag: flagAvailableChannels },
+    { path: customModelMarketplacePath('ModelMarketplace'), label: t('nav.modelMarketplace'), icon: ChannelIcon, hideInSimpleMode: true, featureFlag: flagAvailableChannels },
     { path: '/monitor', label: t('nav.channelStatus'), icon: SignalIcon, featureFlag: flagChannelMonitor },
+    { path: customImagegenPath('CustomImageGeneration'), label: t('nav.customImageGeneration'), icon: SparklesIcon, featureFlag: flagCustomImageGeneration },
+    { path: customImagegenPath('CustomImageHistory'), label: t('nav.customImageHistory'), icon: FolderIcon },
+    { path: customImagegenPath('CustomImageGallery'), label: t('nav.customImageGallery'), icon: GlobeIcon },
     { path: '/subscriptions', label: t('nav.mySubscriptions'), icon: CreditCardIcon, hideInSimpleMode: true },
     { path: '/purchase', label: t('nav.buySubscription'), icon: RechargeSubscriptionIcon, hideInSimpleMode: true, featureFlag: flagPayment },
     { path: '/orders', label: t('nav.myOrders'), icon: OrderListIcon, hideInSimpleMode: true, featureFlag: flagPayment },
@@ -738,6 +761,7 @@ const adminNavItems = computed((): NavItem[] => {
     { path: '/admin/risk-control', label: t('nav.riskControl'), icon: ShieldIcon, hideInSimpleMode: true, featureFlag: flagRiskControl },
     { path: '/admin/redeem', label: t('nav.redeemCodes'), icon: TicketIcon, hideInSimpleMode: true },
     { path: '/admin/promo-codes', label: t('nav.promoCodes'), icon: GiftIcon, hideInSimpleMode: true },
+    { path: customImagegenPath('AdminCustomImages'), label: t('nav.customImageAdmin'), icon: SparklesIcon },
     {
       path: '/admin/affiliates',
       label: t('nav.affiliateManagement'),
@@ -786,6 +810,16 @@ const adminNavItems = computed((): NavItem[] => {
   }
   return visible
 })
+
+// custom 生图路径集中从 custom 路由声明读取，避免菜单和 router 分别维护字符串。
+function customImagegenPath(name: string): string {
+  return findCustomImagegenRoute(name)?.path || '/custom/images'
+}
+
+// 模型广场复用可用渠道接口和开关；路径仍集中在 custom 声明中，方便后续二开迁移。
+function customModelMarketplacePath(name: string): string {
+  return findCustomModelMarketplaceRoute(name)?.path || '/model-marketplace'
+}
 
 function toggleSidebar() {
   appStore.toggleSidebar()
@@ -885,9 +919,23 @@ watch(
   { immediate: true }
 )
 
+// custom 生图菜单只需要公开 enabled 状态，普通用户无需读取管理员配置。
+watch(
+  () => authStore.isAuthenticated,
+  (authenticated) => {
+    if (authenticated) {
+      void imageGenerationStatus.load()
+    }
+  },
+  { immediate: true },
+)
+
 onMounted(() => {
   if (isAdmin.value) {
     adminSettingsStore.fetch()
+  }
+  if (authStore.isAuthenticated) {
+    void imageGenerationStatus.load()
   }
 })
 </script>

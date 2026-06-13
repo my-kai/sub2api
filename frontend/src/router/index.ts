@@ -11,6 +11,8 @@ import { useAdminComplianceStore } from '@/stores/adminCompliance'
 import { useNavigationLoadingState } from '@/composables/useNavigationLoading'
 import { useRoutePrefetch } from '@/composables/useRoutePrefetch'
 import { getSetupStatus } from '@/api/setup'
+import { findCustomImagegenRoute } from '@/custom/imagegen/routes'
+import { findCustomModelMarketplaceRoute } from '@/custom/modelMarketplace/routes'
 import { resolveCompletedSetupRedirectPath } from './setupRedirect'
 import { resolveDocumentTitle } from './title'
 
@@ -254,6 +256,17 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/model-marketplace',
+    name: 'ModelMarketplace',
+    component: () => import('@/custom/modelMarketplace/views/ModelMarketplaceView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: '模型广场',
+      titleKey: 'nav.modelMarketplace',
+    }
+  },
+  {
     path: '/profile',
     name: 'Profile',
     component: () => import('@/views/user/ProfileView.vue'),
@@ -370,6 +383,41 @@ const routes: RouteRecordRaw[] = [
       requiresAdmin: false,
       title: 'Custom Page',
       titleKey: 'customPage.title',
+    }
+  },
+
+  // ==================== Custom Image Generation Routes ====================
+  {
+    path: '/custom/images',
+    name: 'CustomImageGeneration',
+    component: () => import('@/custom/imagegen/views/ImageGenerationView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'AI Image Generation',
+      titleKey: 'nav.customImageGeneration',
+    }
+  },
+  {
+    path: '/custom/images/history',
+    name: 'CustomImageHistory',
+    component: () => import('@/custom/imagegen/views/ImageHistoryView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'My Images',
+      titleKey: 'nav.customImageHistory',
+    }
+  },
+  {
+    path: '/custom/images/gallery',
+    name: 'CustomImageGallery',
+    component: () => import('@/custom/imagegen/views/PublicGalleryView.vue'),
+    meta: {
+      requiresAuth: false,
+      requiresAdmin: false,
+      title: 'Public Gallery',
+      titleKey: 'nav.customImageGallery',
     }
   },
 
@@ -575,6 +623,17 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/custom/images',
+    name: 'AdminCustomImages',
+    component: () => import('@/custom/imagegen/views/ImageQueueAdminView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Image Generation Config',
+      titleKey: 'nav.customImageAdmin',
+    }
+  },
+  {
     path: '/admin/affiliates',
     redirect: '/admin/affiliates/invites'
   },
@@ -733,7 +792,9 @@ router.beforeEach(async (to, _from, next) => {
   // Set page title
   const appStore = useAppStore()
   // For custom pages, use menu item label as document title
-  if (to.name === 'CustomPage') {
+  if (typeof to.name === 'string' && (findCustomImagegenRoute(to.name) || findCustomModelMarketplaceRoute(to.name))) {
+    document.title = resolveDocumentTitle(to.meta.title, appStore.siteName, to.meta.titleKey as string)
+  } else if (to.name === 'CustomPage') {
     const id = to.params.id as string
     const publicItems = appStore.cachedPublicSettings?.custom_menu_items ?? []
     const adminSettingsStore = useAdminSettingsStore()

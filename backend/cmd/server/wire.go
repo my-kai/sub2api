@@ -12,6 +12,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	customimagegen "github.com/Wei-Shaw/sub2api/internal/custom/imagegen"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/payment"
 	"github.com/Wei-Shaw/sub2api/internal/repository"
@@ -39,6 +40,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 		payment.ProviderSet,
 		middleware.ProviderSet,
 		handler.ProviderSet,
+		customimagegen.ProvideBundle,
 
 		// Server layer ProviderSet
 		server.ProviderSet,
@@ -100,10 +102,17 @@ func provideCleanup(
 	paymentOrderExpiry *service.PaymentOrderExpiryService,
 	channelMonitorRunner *service.ChannelMonitorRunner,
 	quotaFlusher *service.UserPlatformQuotaUsageFlusher,
+	customImageGen *customimagegen.Bundle,
 ) func() {
+	customImageGenCtx, stopCustomImageGen := context.WithCancel(context.Background())
+	if customImageGen != nil {
+		go customImageGen.RunWorker(customImageGenCtx)
+	}
+
 	return func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
+		defer stopCustomImageGen()
 
 		type cleanupStep struct {
 			name string

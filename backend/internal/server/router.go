@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	customimagegen "github.com/Wei-Shaw/sub2api/internal/custom/imagegen"
+	customimagegenroutes "github.com/Wei-Shaw/sub2api/internal/custom/imagegen/routes"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/server/routes"
@@ -32,6 +34,7 @@ func SetupRouter(
 	settingService *service.SettingService,
 	cfg *config.Config,
 	redisClient *redis.Client,
+	customImageGen *customimagegen.Bundle,
 ) *gin.Engine {
 	// 缓存 iframe 页面的 origin 列表，用于动态注入 CSP frame-src
 	var cachedFrameOrigins atomic.Pointer[[]string]
@@ -81,7 +84,7 @@ func SetupRouter(
 	}
 
 	// 注册路由
-	registerRoutes(r, handlers, jwtAuth, adminAuth, apiKeyAuth, apiKeyService, subscriptionService, opsService, settingService, cfg, redisClient)
+	registerRoutes(r, handlers, jwtAuth, adminAuth, apiKeyAuth, apiKeyService, subscriptionService, opsService, settingService, cfg, redisClient, customImageGen)
 
 	return r
 }
@@ -99,6 +102,7 @@ func registerRoutes(
 	settingService *service.SettingService,
 	cfg *config.Config,
 	redisClient *redis.Client,
+	customImageGen *customimagegen.Bundle,
 ) {
 	// 通用路由（健康检查、状态等）
 	routes.RegisterCommonRoutes(r)
@@ -112,6 +116,37 @@ func registerRoutes(
 	routes.RegisterAdminRoutes(v1, h, adminAuth, settingService)
 	routes.RegisterGatewayRoutes(r, h, apiKeyAuth, apiKeyService, subscriptionService, opsService, settingService, cfg)
 	routes.RegisterPaymentRoutes(v1, h.Payment, h.PaymentWebhook, h.Admin.Payment, jwtAuth, adminAuth, settingService)
+	registerCustomImageGenerationRoutes(v1, customImageGen, jwtAuth, adminAuth, settingService)
 
 	handler.RegisterPageRoutes(v1, cfg.Pricing.DataDir, gin.HandlerFunc(jwtAuth), gin.HandlerFunc(adminAuth), settingService)
+}
+
+// registerCustomImageGenerationRoutes 只在主仓路由层追加 custom 生图入口。
+//
+// 生图业务 handler、service、store 都在 internal/custom/imagegen 内部装配；这里仅复用
+// 主仓现有鉴权与模式守卫，避免把二开逻辑混入主仓核心路由实现。
+func registerCustomImageGenerationRoutes(
+	v1 *gin.RouterGroup,
+	bundle *customimagegen.Bundle,
+	jwtAuth middleware2.JWTAuthMiddleware,
+	adminAuth middleware2.AdminAuthMiddleware,
+	settingService *service.SettingService,
+) {
+	if v1 == nil || bundle == nil || bundle.Handler == nil {
+		return
+	}
+
+	user := v1.Group("")
+	user.Use(customimagegenroutes.BearerTokenQueryFallback())
+	user.Use(gin.HandlerFunc(jwtAuth))
+	user.Use(middleware2.BackendModeUserGuard(settingService))
+	customimagegenroutes.RegisterUserRoutes(user, bundle.Handler)
+
+	// 公共图库保持匿名可读；handler 内部会按可用登录态决定是否展示提示词。
+	customimagegenroutes.RegisterPublicGalleryRoute(v1, bundle.Handler)
+
+	admin := v1.Group("/admin")
+	admin.Use(gin.HandlerFunc(adminAuth))
+	admin.Use(middleware2.AdminComplianceGuard(settingService))
+	customimagegenroutes.RegisterAdminRoutes(admin, bundle.Handler)
 }
