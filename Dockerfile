@@ -27,8 +27,10 @@ RUN corepack enable && corepack prepare pnpm@9 --activate
 COPY frontend/package.json frontend/pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 
-# Copy frontend source and build
+# Copy frontend source and the legal documents imported by public pages.
 COPY frontend/ ./
+# Note: LegalDocumentView imports these markdown files at Vite build time via ?raw.
+COPY docs/legal/admin-compliance*.md /app/docs/legal/
 RUN pnpm run build
 
 # -----------------------------------------------------------------------------
