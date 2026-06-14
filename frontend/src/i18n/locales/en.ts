@@ -1185,6 +1185,8 @@ export default {
     balanceAddedAffiliate: 'Balance Added (Affiliate Transfer)',
     balanceAddedAdmin: 'Balance Added (Admin)',
     balanceDeductedAdmin: 'Balance Deducted (Admin)',
+    imageGenerationCharged: 'AI Image Charge',
+    imageGenerationRefunded: 'AI Image Refund',
     concurrencyAddedRedeem: 'Concurrency Added (Redeem)',
     concurrencyAddedAdmin: 'Concurrency Added (Admin)',
     concurrencyReducedAdmin: 'Concurrency Reduced (Admin)',
@@ -1993,6 +1995,7 @@ export default {
       typeBalance: 'Balance (Redeem)',
       typeAffiliateBalance: 'Balance (Affiliate Transfer)',
       typeAdminBalance: 'Balance (Admin)',
+      typeImageGeneration: 'Balance (AI Images)',
       typeConcurrency: 'Concurrency (Redeem)',
       typeAdminConcurrency: 'Concurrency (Admin)',
       typeSubscription: 'Subscription',
@@ -4421,6 +4424,7 @@ export default {
         invitation: 'Invitation',
         // Admin adjustment types (created when admin modifies user balance/concurrency)
         admin_balance: 'Balance (Admin)',
+        image_generation: 'Balance (AI Images)',
         admin_concurrency: 'Concurrency (Admin)'
       },
       selectGroup: 'Select Group',

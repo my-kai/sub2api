@@ -22,6 +22,7 @@ type Options struct {
 	HTTPTimeout        time.Duration
 	UserResolver       runtime.UserResolver
 	AdminUserLookup    runtime.AdminUserLookup
+	BalanceCache       imagequeue.BalanceCacheInvalidator
 	Logger             *log.Logger
 }
 
@@ -51,7 +52,9 @@ func NewBundle(db *sql.DB, opts Options) (*Bundle, error) {
 		return nil, err
 	}
 	eventHub := imagequeue.NewTaskEventHub()
-	queueService := imagequeue.NewService(queueStore).WithTaskEventHub(eventHub)
+	queueService := imagequeue.NewService(queueStore).
+		WithTaskEventHub(eventHub).
+		WithBalanceCacheInvalidator(opts.BalanceCache)
 	galleryService := gallery.NewService(galleryStore)
 	timeout := opts.HTTPTimeout
 	if timeout <= 0 {

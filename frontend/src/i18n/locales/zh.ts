@@ -1189,6 +1189,8 @@ export default {
     balanceAddedAffiliate: '余额充值（返利转入）',
     balanceAddedAdmin: '余额充值（管理员）',
     balanceDeductedAdmin: '余额扣除（管理员）',
+    imageGenerationCharged: 'AI 生图扣费',
+    imageGenerationRefunded: 'AI 生图退款',
     concurrencyAddedRedeem: '并发增加（兑换）',
     concurrencyAddedAdmin: '并发增加（管理员）',
     concurrencyReducedAdmin: '并发减少（管理员）',
@@ -2050,6 +2052,7 @@ export default {
       typeBalance: '余额（兑换码）',
       typeAffiliateBalance: '余额（返利转入）',
       typeAdminBalance: '余额（管理员调整）',
+      typeImageGeneration: '余额（AI 生图）',
       typeConcurrency: '并发（兑换码）',
       typeAdminConcurrency: '并发（管理员调整）',
       typeSubscription: '订阅',
@@ -4486,6 +4489,7 @@ export default {
         invitation: '邀请码',
         // 管理员在用户管理页面调整余额/并发时产生的记录
         admin_balance: '余额（管理员）',
+        image_generation: '余额（AI 生图）',
         admin_concurrency: '并发数（管理员）'
       },
       // 用于选择器和筛选器的直接键

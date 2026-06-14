@@ -259,7 +259,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	jwtAuthMiddleware := middleware.NewJWTAuthMiddleware(authService, userService)
 	adminAuthMiddleware := middleware.NewAdminAuthMiddleware(authService, userService, settingService)
 	apiKeyAuthMiddleware := middleware.NewAPIKeyAuthMiddleware(apiKeyService, subscriptionService, configConfig)
-	bundle, err := customimagegen.ProvideBundle(db, userService, adminService)
+	bundle, err := customimagegen.ProvideBundle(db, userService, adminService, billingCacheService)
 	if err != nil {
 		return nil, err
 	}

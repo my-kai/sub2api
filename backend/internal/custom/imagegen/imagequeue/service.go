@@ -3,6 +3,7 @@ package imagequeue
 import (
 	"context"
 	"fmt"
+	"log"
 	"math/big"
 	"net/http"
 	"net/url"
@@ -34,6 +35,11 @@ type ImageClient interface {
 	EditImage(ctx context.Context, input chatgpt2api.ImageEditRequest) (chatgpt2api.ImageGenerationResponse, error)
 }
 
+// BalanceCacheInvalidator 是 custom 生图扣费后刷新主仓余额缓存的窄接口。
+type BalanceCacheInvalidator interface {
+	InvalidateUserBalance(ctx context.Context, userID int64) error
+}
+
 // ChatGPT2APIRuntimeConfig 返回 worker/handler 调用上游时需要的最新配置。
 func (s *Service) ChatGPT2APIRuntimeConfig(ctx context.Context) (chatgpt2api.RuntimeConfig, error) {
 	if s == nil || s.store == nil {
@@ -57,10 +63,11 @@ type taskSourceSnapshot struct {
 
 // Service 封装生图队列的用户侧和管理员侧业务规则。
 type Service struct {
-	store    *Store
-	eventHub *TaskEventHub
-	locks    *userLockPool
-	now      func() time.Time
+	store                   *Store
+	eventHub                *TaskEventHub
+	balanceCacheInvalidator BalanceCacheInvalidator
+	locks                   *userLockPool
+	now                     func() time.Time
 }
 
 // NewService 创建生图队列服务。
@@ -75,6 +82,12 @@ func NewService(store *Store) *Service {
 // WithTaskEventHub 安装任务事件中心，供 HTTP SSE 连接实时刷新任务快照。
 func (s *Service) WithTaskEventHub(hub *TaskEventHub) *Service {
 	s.eventHub = hub
+	return s
+}
+
+// WithBalanceCacheInvalidator 安装主仓余额缓存失效器，避免扣费后网关继续读到旧余额。
+func (s *Service) WithBalanceCacheInvalidator(invalidator BalanceCacheInvalidator) *Service {
+	s.balanceCacheInvalidator = invalidator
 	return s
 }
 
@@ -307,7 +320,7 @@ func (s *Service) createTask(ctx context.Context, user runtime.UserProfile, inpu
 	}
 
 	userID, username, email := UserIdentity(user)
-	job, err := s.store.CreateJob(ctx, Job{
+	job, err := s.store.CreateChargedJob(ctx, Job{
 		UserID:                 userID,
 		Username:               username,
 		Email:                  email,
@@ -326,16 +339,17 @@ func (s *Service) createTask(ctx context.Context, user runtime.UserProfile, inpu
 		Size:                   normalized.Size,
 		PublishToGallery:       normalized.PublishToGallery,
 		ChargeAmount:           price.TotalPrice,
-		// custom 迁移阶段不接主仓余额核心；价格只做配置与预览快照，任务默认不写余额流水。
-		ChargeStatus: ChargeStatusNone,
-		CreatedAt:    s.now(),
-	})
+		ChargeStatus:           ChargeStatusPending,
+		CreatedAt:              s.now(),
+	}, price.TotalPrice, s.now())
 	if err != nil {
 		return Job{}, err
 	}
+	s.invalidateBalanceCache(ctx, userID)
 	if retrySource == nil {
 		if err := s.autoNameSessionForFirstPrompt(ctx, session, job.ID, normalized.Prompt); err != nil {
-			return Job{}, err
+			// 扣费和任务入队已提交；自动命名失败只影响展示，不应让客户端重试后重复扣费。
+			log.Printf("[WARN] auto name image generation session failed: user_id=%d session_id=%d job_id=%d reason=%q", userID, session.ID, job.ID, err.Error())
 		}
 	}
 	result, err := s.attachQueuePosition(ctx, job)
@@ -601,8 +615,37 @@ func (s *Service) RefundFailedJobIfCharged(ctx context.Context, job Job) (Job, e
 }
 
 func (s *Service) refundChargedJob(ctx context.Context, job Job) (Job, error) {
-	// custom 生图当前不接主仓余额流水，失败/取消不需要做余额补偿。
-	return job, nil
+	refunded, err := s.store.RefundChargedJob(ctx, job, refundReasonForJob(job), s.now())
+	if err != nil {
+		marked, markErr := s.store.MarkRefundFailed(ctx, job.ID, err.Error())
+		if markErr == nil {
+			s.invalidateBalanceCache(ctx, job.UserID)
+			return marked, fmt.Errorf("%w: %v", ErrBalanceRefundFailed, err)
+		}
+		return job, fmt.Errorf("%w: %v; mark refund failed: %v", ErrBalanceRefundFailed, err, markErr)
+	}
+	s.invalidateBalanceCache(ctx, job.UserID)
+	return refunded, nil
+}
+
+func (s *Service) invalidateBalanceCache(ctx context.Context, userID int64) {
+	if s == nil || s.balanceCacheInvalidator == nil || userID <= 0 {
+		return
+	}
+	cacheCtx, cancel := context.WithTimeout(contextWithoutCancel(ctx), 2*time.Second)
+	defer cancel()
+	_ = s.balanceCacheInvalidator.InvalidateUserBalance(cacheCtx, userID)
+}
+
+func refundReasonForJob(job Job) string {
+	switch job.Status {
+	case JobStatusCanceled:
+		return "任务已撤销"
+	case JobStatusFailed:
+		return "任务生成失败"
+	default:
+		return "任务未完成"
+	}
 }
 
 func normalizeCreateInput(input CreateJobInput) (CreateJobInput, error) {
@@ -1009,6 +1052,11 @@ func formatDecimalString(raw string, precision int) string {
 		return strings.TrimSpace(raw)
 	}
 	return parsed.FloatString(precision)
+}
+
+func isZeroDecimalString(raw string) bool {
+	parsed, err := parseNonNegativeDecimal(raw)
+	return err == nil && parsed.Sign() == 0
 }
 
 func isPlainDecimal(value string) bool {

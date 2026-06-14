@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -19,6 +20,7 @@ const (
 	maxImageCount           = 10
 	maxPromptLength         = 8000
 	maxImageBodySize        = 64 << 20
+	minSourceImageTimeout   = 10 * time.Minute
 	imageResponseURL        = "url"
 	defaultImageFilename    = "source.png"
 	defaultImageContentType = "image/png"
@@ -85,9 +87,30 @@ func NewClient(baseURL *url.URL, authKey string, timeout time.Duration) *Client 
 		httpClient: &http.Client{
 			Timeout: timeout,
 		},
-		sourceDownloadClient: &http.Client{
-			Timeout: timeout,
-		},
+		sourceDownloadClient: newSourceDownloadClient(sourceImageDownloadTimeout(timeout)),
+	}
+}
+
+func sourceImageDownloadTimeout(timeout time.Duration) time.Duration {
+	if timeout < minSourceImageTimeout {
+		return minSourceImageTimeout
+	}
+	return timeout
+}
+
+func newSourceDownloadClient(timeout time.Duration) *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// 来源图下载最容易卡在 DNS / TCP 连接阶段；默认 Transport 的 30 秒拨号超时会早于
+	// IMAGE_CLIENT_TIMEOUT 触发，这里显式拉齐，避免大图编辑还没进入上游生图就失败。
+	transport.DialContext = (&net.Dialer{
+		Timeout:   timeout,
+		KeepAlive: 30 * time.Second,
+	}).DialContext
+	transport.TLSHandshakeTimeout = timeout
+	transport.ResponseHeaderTimeout = timeout
+	return &http.Client{
+		Timeout:   timeout,
+		Transport: transport,
 	}
 }
 

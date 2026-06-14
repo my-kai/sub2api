@@ -2,7 +2,9 @@ package imagequeue
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +22,17 @@ type Store struct {
 	db          *sql.DB
 	tablePrefix string
 }
+
+type sqlExecutor interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+const (
+	imageGenerationRedeemType = "image_generation"
+	imageGenerationChargeNote = "AI 生图扣费"
+	imageGenerationRefundNote = "AI 生图退款"
+)
 
 // NewStore 基于已迁移的 SQL 连接创建 store。
 func NewStore(db *sql.DB, tablePrefix string) (*Store, error) {
@@ -43,6 +56,105 @@ func (s *Store) DB() *sql.DB {
 		return nil
 	}
 	return s.db
+}
+
+// CreateChargedJob 在同一个数据库事务内完成余额扣减、余额历史写入和 queued 任务创建。
+//
+// 这里不用主仓 userRepo.DeductBalance，因为它允许透支；生图创建必须用 SQL 条件保证
+// “余额足够才扣款和入队”，避免用户并发提交时出现超扣。
+func (s *Store) CreateChargedJob(ctx context.Context, job Job, amount string, chargedAt time.Time) (Job, error) {
+	if chargedAt.IsZero() {
+		chargedAt = time.Now().UTC()
+	}
+	amount = formatDecimalString(amount, 5)
+	if isZeroDecimalString(amount) {
+		job.ChargeStatus = ChargeStatusNone
+		return s.CreateJob(ctx, job)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Job{}, fmt.Errorf("begin image generation charge transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if err := deductUserBalance(ctx, tx, job.UserID, amount); err != nil {
+		return Job{}, err
+	}
+
+	keySeed := balanceLifecycleKeySeed(job, chargedAt)
+	job.BalanceIdempotencyKey = balanceLifecycleKey(keySeed)
+	job.ChargeAmount = amount
+	job.ChargeStatus = ChargeStatusSuccess
+	job.ChargeMessage = ""
+	created, err := s.createJobWithExecutor(ctx, tx, job)
+	if err != nil {
+		return Job{}, err
+	}
+	if err := insertImageGenerationBalanceHistory(ctx, tx, created.UserID, created.BalanceIdempotencyKey, imageGenerationChargeNote, "-"+amount, chargedAt); err != nil {
+		return Job{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Job{}, fmt.Errorf("commit image generation charge transaction: %w", err)
+	}
+	return s.GetJob(ctx, created.ID)
+}
+
+// RefundChargedJob 只对 charge_status=success 的任务做一次性退款补偿。
+//
+// 余额和 redeem_codes 历史记录与任务退款状态必须同事务更新；如果任何一步失败，
+// 任务会被标记为 refund_failed，方便后台按 charge_message 人工补偿。
+func (s *Store) RefundChargedJob(ctx context.Context, job Job, reason string, refundedAt time.Time) (Job, error) {
+	if job.ID <= 0 {
+		return Job{}, ErrJobNotFound
+	}
+	if job.ChargeStatus != ChargeStatusSuccess {
+		return job, nil
+	}
+	amount := formatDecimalString(job.ChargeAmount, 5)
+	if isZeroDecimalString(amount) {
+		return s.MarkRefundSucceeded(ctx, job.ID)
+	}
+	if refundedAt.IsZero() {
+		refundedAt = time.Now().UTC()
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Job{}, fmt.Errorf("begin image generation refund transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	locked, err := markRefundPending(ctx, tx, s.table("image_generation_jobs"), job.ID)
+	if err != nil {
+		return Job{}, err
+	}
+	if !locked {
+		return s.GetJob(ctx, job.ID)
+	}
+	if err := addUserBalance(ctx, tx, job.UserID, amount); err != nil {
+		return Job{}, err
+	}
+	refundKey := job.BalanceIdempotencyKey
+	if strings.TrimSpace(refundKey) == "" {
+		refundKey = balanceLifecycleKey(fmt.Sprintf("imagegen:%d:%d", job.UserID, job.ID))
+	}
+	note := imageGenerationRefundNote
+	if strings.TrimSpace(reason) != "" {
+		note += "：" + strings.TrimSpace(reason)
+	}
+	if err := insertImageGenerationBalanceHistory(ctx, tx, job.UserID, balanceLifecycleKey(refundKey+":refund"), note, amount, refundedAt); err != nil {
+		return Job{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE `+s.table("image_generation_jobs")+`
+		SET charge_status = $1, charge_message = NULL
+		WHERE id = $2 AND charge_status = $3
+	`, ChargeStatusRefunded, job.ID, ChargeStatusSuccess); err != nil {
+		return Job{}, fmt.Errorf("mark image generation refund succeeded: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return Job{}, fmt.Errorf("commit image generation refund transaction: %w", err)
+	}
+	return s.GetJob(ctx, job.ID)
 }
 
 // GetConfig 读取唯一生效的生图并发配置。
@@ -402,13 +514,17 @@ func (s *Store) LatestSessionImageReference(ctx context.Context, userID int64, s
 
 // TouchSessionLastTask 记录会话最后任务并刷新排序时间。
 func (s *Store) TouchSessionLastTask(ctx context.Context, sessionID int64, taskID int64, updatedAt time.Time) error {
+	return s.touchSessionLastTaskWithExecutor(ctx, s.db, sessionID, taskID, updatedAt)
+}
+
+func (s *Store) touchSessionLastTaskWithExecutor(ctx context.Context, exec sqlExecutor, sessionID int64, taskID int64, updatedAt time.Time) error {
 	if sessionID <= 0 {
 		return nil
 	}
 	if updatedAt.IsZero() {
 		updatedAt = time.Now().UTC()
 	}
-	if _, err := s.db.ExecContext(ctx, `
+	if _, err := exec.ExecContext(ctx, `
 		UPDATE `+s.table("image_generation_sessions")+`
 		SET last_task_id = $1, updated_at = $2
 		WHERE id = $3
@@ -420,6 +536,14 @@ func (s *Store) TouchSessionLastTask(ctx context.Context, sessionID int64, taskI
 
 // CreateJob 保存 queued 任务。
 func (s *Store) CreateJob(ctx context.Context, job Job) (Job, error) {
+	created, err := s.createJobWithExecutor(ctx, s.db, job)
+	if err != nil {
+		return Job{}, err
+	}
+	return s.GetJob(ctx, created.ID)
+}
+
+func (s *Store) createJobWithExecutor(ctx context.Context, exec sqlExecutor, job Job) (Job, error) {
 	if job.CreatedAt.IsZero() {
 		job.CreatedAt = time.Now().UTC()
 	}
@@ -439,7 +563,7 @@ func (s *Store) CreateJob(ctx context.Context, job Job) (Job, error) {
 	if err != nil {
 		return Job{}, err
 	}
-	row := s.db.QueryRowContext(ctx, `
+	row := exec.QueryRowContext(ctx, `
 		INSERT INTO `+s.table("image_generation_jobs")+` (
 			user_id, username, email, status, session_id, generation_mode,
 			source_image_task_id, source_image_index, source_image_bytes, source_image_filename,
@@ -465,10 +589,10 @@ func (s *Store) CreateJob(ctx context.Context, job Job) (Job, error) {
 	if err := row.Scan(&job.ID); err != nil {
 		return Job{}, fmt.Errorf("create image generation job: %w", err)
 	}
-	if err := s.TouchSessionLastTask(ctx, job.SessionID, job.ID, job.CreatedAt); err != nil {
+	if err := s.touchSessionLastTaskWithExecutor(ctx, exec, job.SessionID, job.ID, job.CreatedAt); err != nil {
 		return Job{}, err
 	}
-	return s.GetJob(ctx, job.ID)
+	return job, nil
 }
 
 // GetJob 按 ID 读取任务。
@@ -779,6 +903,85 @@ func (s *Store) updateJobReturning(ctx context.Context, id int64, setClause stri
 
 func (s *Store) table(name string) string {
 	return s.tablePrefix + name
+}
+
+func deductUserBalance(ctx context.Context, exec sqlExecutor, userID int64, amount string) error {
+	result, err := exec.ExecContext(ctx, `
+		UPDATE users
+		SET balance = balance - $1::decimal,
+		    updated_at = NOW()
+		WHERE id = $2
+		  AND deleted_at IS NULL
+		  AND balance >= $1::decimal
+	`, amount, userID)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrBalanceChargeFailed, err)
+	}
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		return ErrInsufficientBalance
+	}
+	return nil
+}
+
+func addUserBalance(ctx context.Context, exec sqlExecutor, userID int64, amount string) error {
+	result, err := exec.ExecContext(ctx, `
+		UPDATE users
+		SET balance = balance + $1::decimal,
+		    updated_at = NOW()
+		WHERE id = $2
+		  AND deleted_at IS NULL
+	`, amount, userID)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrBalanceRefundFailed, err)
+	}
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		return fmt.Errorf("%w: user not found", ErrBalanceRefundFailed)
+	}
+	return nil
+}
+
+func insertImageGenerationBalanceHistory(ctx context.Context, exec sqlExecutor, userID int64, code string, note string, value string, at time.Time) error {
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	if strings.TrimSpace(code) == "" {
+		return fmt.Errorf("image generation balance history code is required")
+	}
+	if _, err := exec.ExecContext(ctx, `
+		INSERT INTO redeem_codes (
+			code, type, value, status, used_by, used_at, notes, created_at, validity_days
+		) VALUES (
+			$1, $2, $3::decimal, $4, $5, $6, $7, $6, 0
+		)
+	`, code, imageGenerationRedeemType, value, "used", userID, at.UTC(), note); err != nil {
+		return fmt.Errorf("insert image generation balance history: %w", err)
+	}
+	return nil
+}
+
+func markRefundPending(ctx context.Context, exec sqlExecutor, tableName string, jobID int64) (bool, error) {
+	result, err := exec.ExecContext(ctx, `
+		UPDATE `+tableName+`
+		SET charge_status = $1, charge_message = NULL
+		WHERE id = $2 AND charge_status = $3
+	`, ChargeStatusPending, jobID, ChargeStatusSuccess)
+	if err != nil {
+		return false, fmt.Errorf("mark image generation refund pending: %w", err)
+	}
+	affected, _ := result.RowsAffected()
+	return affected > 0, nil
+}
+
+func balanceLifecycleKeySeed(job Job, at time.Time) string {
+	return fmt.Sprintf("imagegen:%d:%d:%s:%s:%s:%d:%s:%s", job.UserID, job.SessionID, job.Model, job.Size, job.Quality, job.N, job.Prompt, at.UTC().Format(time.RFC3339Nano))
+}
+
+func balanceLifecycleKey(seed string) string {
+	sum := sha256.Sum256([]byte(seed))
+	// redeem_codes.code 最长 32 字符，保留固定前缀便于从历史记录识别来源。
+	return "IG" + strings.ToUpper(hex.EncodeToString(sum[:15]))
 }
 
 func validateTablePrefix(prefix string) error {

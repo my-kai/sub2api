@@ -14,7 +14,7 @@ export interface RedeemHistoryItem {
   status: string
   used_at: string
   created_at: string
-  // Notes from admin for admin_balance/admin_concurrency types
+  // Notes explain adjustment-like records such as admin changes or image generation charges.
   notes?: string
   // Subscription-specific fields
   group_id?: number

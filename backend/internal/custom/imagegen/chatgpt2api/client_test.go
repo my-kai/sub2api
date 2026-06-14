@@ -194,6 +194,19 @@ func TestEditImageKeepsMultipartFileFallback(t *testing.T) {
 	}
 }
 
+// TestNewClientExtendsSourceImageDownloadTimeout 确认来源图下载不会被短上游请求超时提前截断。
+func TestNewClientExtendsSourceImageDownloadTimeout(t *testing.T) {
+	baseURL, err := url.Parse("http://127.0.0.1:8000")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	client := NewClient(baseURL, "image-key", time.Second)
+	if client.sourceDownloadClient.Timeout != minSourceImageTimeout {
+		t.Fatalf("source image timeout = %v, want %v", client.sourceDownloadClient.Timeout, minSourceImageTimeout)
+	}
+}
+
 // TestEditImageValidatesSourceImage 避免空图片编辑请求打到上游。
 func TestEditImageValidatesSourceImage(t *testing.T) {
 	baseURL, err := url.Parse("http://127.0.0.1:8000")

@@ -867,6 +867,8 @@ func writeImageQueueError(c *gin.Context, err error) {
 		c.JSON(http.StatusBadRequest, gin.H{"message": err.Error()})
 	case errors.Is(err, imagequeue.ErrBalanceNotConfigured):
 		c.JSON(http.StatusServiceUnavailable, gin.H{"message": "余额服务暂时不可用"})
+	case errors.Is(err, imagequeue.ErrInsufficientBalance):
+		c.JSON(http.StatusPaymentRequired, gin.H{"message": "余额不足，无法创建生图任务"})
 	case errors.Is(err, imagequeue.ErrBalanceChargeFailed):
 		c.JSON(http.StatusPaymentRequired, gin.H{"message": "余额不足，无法创建生图任务"})
 	case errors.Is(err, imagequeue.ErrBalanceRefundFailed):

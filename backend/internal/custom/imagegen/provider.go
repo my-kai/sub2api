@@ -15,7 +15,7 @@ import (
 //
 // 这里集中执行 custom SQL、读取 custom 环境变量并装配 worker；主仓启动文件只需要调用
 // 这一处，避免把二开业务细节散落到 Wire 生成的大文件里。
-func ProvideBundle(db *sql.DB, userService *service.UserService, adminService service.AdminService) (*Bundle, error) {
+func ProvideBundle(db *sql.DB, userService *service.UserService, adminService service.AdminService, billingCacheService *service.BillingCacheService) (*Bundle, error) {
 	cfg, err := runtime.LoadConfigFromEnv()
 	if err != nil {
 		return nil, fmt.Errorf("load custom imagegen config: %w", err)
@@ -40,6 +40,7 @@ func ProvideBundle(db *sql.DB, userService *service.UserService, adminService se
 		HTTPTimeout:        cfg.HTTPTimeout,
 		UserResolver:       runtime.NewContextUserResolver(userReader),
 		AdminUserLookup:    runtime.NewMainAdminUserLookup(adminService),
+		BalanceCache:       billingCacheService,
 		Logger:             log.Default(),
 	})
 }

@@ -18,7 +18,11 @@ const (
 	defaultWorkerInterval     = 2 * time.Second
 	defaultClaimBatchSize     = 50
 	maxUpstreamImageBatchSize = 10
+	maxImageQuotaRetries      = 10
 )
+
+// imageQuotaRetryDelay 给上游账号池留下短暂切换窗口；测试会临时置零避免拖慢单测。
+var imageQuotaRetryDelay = 500 * time.Millisecond
 
 // WorkerOptions 保存队列 worker 的可调参数。
 type WorkerOptions struct {
@@ -220,7 +224,7 @@ func (w *Worker) generateJobImages(ctx context.Context, job Job) (chatgpt2api.Im
 			Size:           job.Size,
 			ResponseFormat: "url",
 		}
-		result, err := w.imageClient.GenerateImage(ctx, request)
+		result, err := w.generateImageWithQuotaRetry(ctx, job, request)
 		if err != nil {
 			return chatgpt2api.ImageGenerationResponse{}, err
 		}
@@ -262,7 +266,7 @@ func (w *Worker) editJobImages(ctx context.Context, job Job) (chatgpt2api.ImageG
 			ImageFilename:    sourceImageFilename,
 			ImageContentType: sourceImageContentType,
 		}
-		result, err := w.imageClient.EditImage(ctx, request)
+		result, err := w.editImageWithQuotaRetry(ctx, job, request)
 		if err != nil {
 			return chatgpt2api.ImageGenerationResponse{}, err
 		}
@@ -276,6 +280,80 @@ func (w *Worker) editJobImages(ctx context.Context, job Job) (chatgpt2api.ImageG
 		merged.Data = []chatgpt2api.ImageGenerationData{}
 	}
 	return merged, nil
+}
+
+// generateImageWithQuotaRetry 对 chatgpt2api 临时无生图额度做定向重试。
+//
+// 该错误通常来自上游账号池的瞬时选择结果，重试可能命中其他可用账号；其他错误不重试，
+// 避免把鉴权、参数或网络异常误放大为长时间占用队列。
+func (w *Worker) generateImageWithQuotaRetry(ctx context.Context, job Job, request chatgpt2api.ImageGenerationRequest) (chatgpt2api.ImageGenerationResponse, error) {
+	return w.imageRequestWithQuotaRetry(ctx, job, "generate", func(ctx context.Context) (chatgpt2api.ImageGenerationResponse, error) {
+		return w.imageClient.GenerateImage(ctx, request)
+	})
+}
+
+// editImageWithQuotaRetry 对图片编辑接口复用同一套上游额度重试规则。
+func (w *Worker) editImageWithQuotaRetry(ctx context.Context, job Job, request chatgpt2api.ImageEditRequest) (chatgpt2api.ImageGenerationResponse, error) {
+	return w.imageRequestWithQuotaRetry(ctx, job, "edit", func(ctx context.Context) (chatgpt2api.ImageGenerationResponse, error) {
+		return w.imageClient.EditImage(ctx, request)
+	})
+}
+
+// imageRequestWithQuotaRetry 只处理 no available image quota，最多额外重试 10 次。
+func (w *Worker) imageRequestWithQuotaRetry(ctx context.Context, job Job, operation string, call func(context.Context) (chatgpt2api.ImageGenerationResponse, error)) (chatgpt2api.ImageGenerationResponse, error) {
+	result, err := call(ctx)
+	if err == nil || !isNoAvailableImageQuotaError(err) {
+		return result, err
+	}
+
+	lastErr := err
+	for retry := 1; retry <= maxImageQuotaRetries; retry++ {
+		w.logf(
+			"image generation upstream quota unavailable, retrying: job_id=%d user_id=%d mode=%q retry=%d/%d reason=%q",
+			job.ID,
+			job.UserID,
+			operation,
+			retry,
+			maxImageQuotaRetries,
+			sanitizeWorkerErrorForLog(lastErr),
+		)
+		if err := waitImageQuotaRetry(ctx); err != nil {
+			return chatgpt2api.ImageGenerationResponse{}, err
+		}
+		result, err = call(ctx)
+		if err == nil || !isNoAvailableImageQuotaError(err) {
+			return result, err
+		}
+		lastErr = err
+	}
+	return chatgpt2api.ImageGenerationResponse{}, lastErr
+}
+
+// waitImageQuotaRetry 在 context 取消时立即退出，避免服务关闭时 worker 被重试 sleep 卡住。
+func waitImageQuotaRetry(ctx context.Context) error {
+	if imageQuotaRetryDelay <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(imageQuotaRetryDelay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// isNoAvailableImageQuotaError 兼容上游业务错误和被包装后的普通错误文本。
+func isNoAvailableImageQuotaError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var upstreamErr *chatgpt2api.UpstreamError
+	if errors.As(err, &upstreamErr) && strings.Contains(strings.ToLower(upstreamErr.Error()), "no available image quota") {
+		return true
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "no available image quota")
 }
 
 func (w *Worker) editSourceImage(ctx context.Context, job Job) (string, []byte, string, string, error) {

@@ -63,6 +63,8 @@ var (
 	ErrBalanceChargeFailed = errors.New("image generation balance charge failed")
 	// ErrBalanceRefundFailed 保留旧错误类型兼容；custom 生图当前不会主动退款。
 	ErrBalanceRefundFailed = errors.New("image generation balance refund failed")
+	// ErrInsufficientBalance 表示用户余额不足，创建任务必须在入队前终止。
+	ErrInsufficientBalance = errors.New("image generation balance is insufficient")
 	// ErrJobNotFound 表示指定任务不存在或当前用户不可见。
 	ErrJobNotFound = errors.New("image generation job not found")
 	// ErrSessionNotFound 表示指定 Session 不存在、已删除或当前用户不可见。
