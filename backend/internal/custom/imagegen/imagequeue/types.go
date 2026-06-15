@@ -77,6 +77,10 @@ var (
 	ErrForbidden = errors.New("image queue access is forbidden")
 	// ErrDisabled 表示管理员已关闭用户侧生图创建入口。
 	ErrDisabled = errors.New("image generation is disabled")
+	// ErrAPIKeyNotFound 表示生图 OpenAI 兼容 Key 不存在、已禁用或已删除。
+	ErrAPIKeyNotFound = errors.New("image generation api key not found")
+	// ErrTaskWaitTimeout 表示 OpenAI 兼容同步接口等待超时；后台任务仍继续执行。
+	ErrTaskWaitTimeout = errors.New("image generation task wait timeout")
 )
 
 // JobStatus 是生图任务的持久化状态机。
@@ -158,24 +162,28 @@ type MyImage struct {
 
 // Config 保存管理员控制的平台并发与保留策略。
 type Config struct {
-	Enabled                bool           `json:"enabled"`
-	PlatformConcurrency    int            `json:"platform_concurrency"`
-	DefaultUserConcurrency int            `json:"default_user_concurrency"`
-	RetentionDays          int            `json:"retention_days"`
-	UnitPrices             UnitPrice      `json:"unit_prices"`
-	ChatGPT2API            UpstreamConfig `json:"chatgpt2api"`
-	UpdatedByUserID        int64          `json:"updated_by_user_id,omitempty"`
-	UpdatedAt              time.Time      `json:"updated_at"`
+	Enabled                bool              `json:"enabled"`
+	PlatformConcurrency    int               `json:"platform_concurrency"`
+	DefaultUserConcurrency int               `json:"default_user_concurrency"`
+	RetentionDays          int               `json:"retention_days"`
+	UnitPrices             UnitPrice         `json:"unit_prices"`
+	UpstreamChannels       []UpstreamChannel `json:"upstream_channels"`
+	// Deprecated: ChatGPT2API 只保留给旧前端响应兼容，运行路径以 UpstreamChannels 为准。
+	ChatGPT2API     UpstreamConfig `json:"chatgpt2api,omitempty"`
+	UpdatedByUserID int64          `json:"updated_by_user_id,omitempty"`
+	UpdatedAt       time.Time      `json:"updated_at"`
 }
 
 // ConfigInput 是管理员保存全局并发配置的请求体。
 type ConfigInput struct {
-	Enabled                *bool               `json:"enabled"`
-	PlatformConcurrency    int                 `json:"platform_concurrency"`
-	DefaultUserConcurrency int                 `json:"default_user_concurrency"`
-	RetentionDays          int                 `json:"retention_days"`
-	UnitPrices             UnitPriceInput      `json:"unit_prices"`
-	ChatGPT2API            UpstreamConfigInput `json:"chatgpt2api"`
+	Enabled                *bool                  `json:"enabled"`
+	PlatformConcurrency    int                    `json:"platform_concurrency"`
+	DefaultUserConcurrency int                    `json:"default_user_concurrency"`
+	RetentionDays          int                    `json:"retention_days"`
+	UnitPrices             UnitPriceInput         `json:"unit_prices"`
+	UpstreamChannels       []UpstreamChannelInput `json:"upstream_channels"`
+	// Deprecated: ChatGPT2API 只用于接受旧管理页请求；保存时会转换为 UpstreamChannels。
+	ChatGPT2API UpstreamConfigInput `json:"chatgpt2api"`
 }
 
 // PublicStatus 是普通用户可读取的生图公开状态。
@@ -217,6 +225,46 @@ type UpstreamConfigInput struct {
 	ClearAuthKey bool   `json:"clear_auth_key"`
 }
 
+// UpstreamChannelType 是 custom 生图支持的上游渠道类型。
+type UpstreamChannelType string
+
+const (
+	// UpstreamChannelTypeChatGPT2API 表示现有 chatgpt2api 兼容渠道。
+	UpstreamChannelTypeChatGPT2API UpstreamChannelType = "chatgpt2api"
+	// UpstreamChannelTypeOpenAI 表示 OpenAI 官方 gpt-image-2 Image API 渠道。
+	UpstreamChannelTypeOpenAI UpstreamChannelType = "openai"
+)
+
+// UpstreamChannel 保存单个生图上游渠道的运行期配置。
+//
+// AuthKey 永不输出到 JSON；管理页只能看到 AuthKeyConfigured，避免读取配置时泄露密钥。
+type UpstreamChannel struct {
+	ID                string              `json:"id"`
+	Name              string              `json:"name"`
+	Type              UpstreamChannelType `json:"type"`
+	Enabled           bool                `json:"enabled"`
+	Priority          int                 `json:"priority"`
+	BaseURL           string              `json:"base_url"`
+	AuthKey           string              `json:"-"`
+	AuthKeyConfigured bool                `json:"auth_key_configured"`
+	RetryCount        int                 `json:"retry_count"`
+}
+
+// UpstreamChannelInput 是管理页保存渠道列表时的输入结构。
+//
+// AuthKey 留空且 ClearAuthKey 为 false 时表示保留旧密钥；渠道重排时优先按 ID 合并旧密钥。
+type UpstreamChannelInput struct {
+	ID           string              `json:"id"`
+	Name         string              `json:"name"`
+	Type         UpstreamChannelType `json:"type"`
+	Enabled      *bool               `json:"enabled"`
+	Priority     *int                `json:"priority"`
+	BaseURL      string              `json:"base_url"`
+	AuthKey      string              `json:"auth_key"`
+	ClearAuthKey bool                `json:"clear_auth_key"`
+	RetryCount   int                 `json:"retry_count"`
+}
+
 // PriceQuote 是用户侧按当前参数计算出来的图片额度预览。
 type PriceQuote struct {
 	Model      string `json:"model"`
@@ -247,6 +295,28 @@ type UserLimit struct {
 // UserLimitInput 是管理员新增或编辑用户并发覆盖的请求体。
 type UserLimitInput struct {
 	Concurrency int `json:"concurrency"`
+}
+
+// APIKey 是用户可管理的 OpenAI 兼容生图 Key 元数据。
+//
+// PlaintextKey 只在创建接口响应中填充；列表接口必须保持为空，避免完整 Key 二次泄露。
+type APIKey struct {
+	ID           int64      `json:"id"`
+	UserID       int64      `json:"user_id,omitempty"`
+	Name         string     `json:"name"`
+	KeyPrefix    string     `json:"key_prefix"`
+	KeySuffix    string     `json:"key_suffix,omitempty"`
+	MaskedKey    string     `json:"masked_key"`
+	PlaintextKey string     `json:"key,omitempty"`
+	Enabled      bool       `json:"enabled"`
+	LastUsedAt   *time.Time `json:"last_used_at,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+	DeletedAt    *time.Time `json:"deleted_at,omitempty"`
+}
+
+// CreateAPIKeyInput 是用户创建生图 Key 的请求体。
+type CreateAPIKeyInput struct {
+	Name string `json:"name"`
 }
 
 // UserLimitSnapshot 是保存覆盖时同步记录的用户展示信息。
@@ -285,6 +355,8 @@ type Job struct {
 	N                      int    `json:"n"`
 	Quality                string `json:"quality,omitempty"`
 	Size                   string `json:"size,omitempty"`
+	OutputFormat           string `json:"output_format,omitempty"`
+	OutputCompression      *int   `json:"output_compression,omitempty"`
 	PublishToGallery       bool   `json:"publish_to_gallery"`
 	// ChargeAmount 保存本任务真实扣减的额度字符串，避免金额经 float 转换后发生精度漂移。
 	ChargeAmount string `json:"charge_amount"`
@@ -310,7 +382,11 @@ type CreateJobInput struct {
 	N                      int    `json:"n"`
 	Quality                string `json:"quality,omitempty"`
 	Size                   string `json:"size,omitempty"`
+	OutputFormat           string `json:"output_format,omitempty"`
+	OutputCompression      *int   `json:"output_compression,omitempty"`
 	PublishToGallery       bool   `json:"publish_to_gallery"`
+	SourceImageTaskID      int64  `json:"-"`
+	SourceImageIndex       *int   `json:"-"`
 	SourceImageBytes       []byte `json:"-"`
 	SourceImageFilename    string `json:"-"`
 	SourceImageContentType string `json:"-"`

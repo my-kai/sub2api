@@ -38,6 +38,12 @@ type ImageQueueService interface {
 	Config(ctx context.Context) (imagequeue.Config, error)
 	PublicStatus(ctx context.Context) (imagequeue.PublicStatus, error)
 	QuotePrice(ctx context.Context, input imagequeue.PriceQuoteInput) (imagequeue.PriceQuote, error)
+	APIKeys(ctx context.Context, user runtime.UserProfile) ([]imagequeue.APIKey, error)
+	CreateAPIKey(ctx context.Context, user runtime.UserProfile, input imagequeue.CreateAPIKeyInput) (imagequeue.APIKey, error)
+	DeleteAPIKey(ctx context.Context, user runtime.UserProfile, id int64) error
+	UserForAPIKey(ctx context.Context, plaintext string) (runtime.UserProfile, imagequeue.APIKey, error)
+	CreateOpenAITask(ctx context.Context, user runtime.UserProfile, input imagequeue.CreateJobInput) (imagequeue.Job, error)
+	WaitTaskTerminal(ctx context.Context, user runtime.UserProfile, id int64, timeout time.Duration) (imagequeue.Job, error)
 	UpdateConfig(ctx context.Context, input imagequeue.ConfigInput, admin runtime.UserProfile) (imagequeue.Config, error)
 	UserLimits(ctx context.Context) ([]imagequeue.UserLimit, error)
 	UpsertUserLimit(ctx context.Context, userID int64, input imagequeue.UserLimitInput, snapshot imagequeue.UserLimitSnapshot) (imagequeue.UserLimit, error)
@@ -398,11 +404,13 @@ func readMultipartCreateTaskInput(c *gin.Context) (imagequeue.CreateJobInput, er
 		return imagequeue.CreateJobInput{}, err
 	}
 	input := imagequeue.CreateJobInput{
-		Model:            c.PostForm("model"),
-		Prompt:           c.PostForm("prompt"),
-		Quality:          c.PostForm("quality"),
-		Size:             c.PostForm("size"),
-		PublishToGallery: parseBoolFormValue(c.PostForm("publish_to_gallery")),
+		Model:             c.PostForm("model"),
+		Prompt:            c.PostForm("prompt"),
+		Quality:           c.PostForm("quality"),
+		Size:              c.PostForm("size"),
+		OutputFormat:      c.PostForm("output_format"),
+		OutputCompression: parseOptionalIntFormValue(c.PostForm("output_compression")),
+		PublishToGallery:  parseBoolFormValue(c.PostForm("publish_to_gallery")),
 	}
 	if sessionID, err := strconv.ParseInt(strings.TrimSpace(c.PostForm("session_id")), 10, 64); err == nil {
 		input.SessionID = sessionID
@@ -410,10 +418,17 @@ func readMultipartCreateTaskInput(c *gin.Context) (imagequeue.CreateJobInput, er
 	if count, err := strconv.Atoi(strings.TrimSpace(c.PostForm("n"))); err == nil {
 		input.N = count
 	}
+	if taskID, imageIndex, ok := parseTaskImageFormReference(c.PostForm("image")); ok {
+		input.SourceImageTaskID = taskID
+		input.SourceImageIndex = &imageIndex
+	}
 
 	file, header, err := c.Request.FormFile("image")
-	if err != nil {
+	if err != nil && errors.Is(err, http.ErrMissingFile) {
 		return input, nil
+	}
+	if err != nil {
+		return imagequeue.CreateJobInput{}, err
 	}
 	defer file.Close()
 	body, err := io.ReadAll(io.LimitReader(file, maxImageTaskUploadBytes+1))
@@ -427,6 +442,38 @@ func readMultipartCreateTaskInput(c *gin.Context) (imagequeue.CreateJobInput, er
 	input.SourceImageFilename = header.Filename
 	input.SourceImageContentType = header.Header.Get("Content-Type")
 	return input, nil
+}
+
+func parseOptionalIntFormValue(value string) *int {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	parsed, err := strconv.Atoi(trimmed)
+	if err != nil {
+		return nil
+	}
+	return &parsed
+}
+
+func parseTaskImageFormReference(value string) (int64, int, bool) {
+	trimmed := strings.TrimSpace(value)
+	if !strings.HasPrefix(trimmed, "task:") {
+		return 0, 0, false
+	}
+	parts := strings.Split(trimmed, ":")
+	if len(parts) != 3 {
+		return 0, 0, false
+	}
+	taskID, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil || taskID <= 0 {
+		return 0, 0, false
+	}
+	imageIndex, err := strconv.Atoi(parts[2])
+	if err != nil || imageIndex < 0 {
+		return 0, 0, false
+	}
+	return taskID, imageIndex, true
 }
 
 func parseBoolFormValue(value string) bool {
@@ -612,6 +659,59 @@ func (h *ImageGenerationHandler) PriceQuote(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, quote)
+}
+
+// APIKeys 返回当前用户自己的生图 Key 脱敏列表。
+func (h *ImageGenerationHandler) APIKeys(c *gin.Context) {
+	user, ok := h.requireUser(c)
+	if !ok {
+		return
+	}
+	items, err := h.queueService.APIKeys(c.Request.Context(), user)
+	if err != nil {
+		writeImageQueueError(c, err)
+		return
+	}
+	if items == nil {
+		items = []imagequeue.APIKey{}
+	}
+	c.JSON(http.StatusOK, gin.H{"items": items})
+}
+
+// CreateAPIKey 创建生图 Key；完整明文只在本次响应中返回。
+func (h *ImageGenerationHandler) CreateAPIKey(c *gin.Context) {
+	user, ok := h.requireUser(c)
+	if !ok {
+		return
+	}
+	var input imagequeue.CreateAPIKeyInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "invalid image api key request"})
+		return
+	}
+	key, err := h.queueService.CreateAPIKey(c.Request.Context(), user, input)
+	if err != nil {
+		writeImageQueueError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"api_key": key})
+}
+
+// DeleteAPIKey 软删除当前用户自己的生图 Key。
+func (h *ImageGenerationHandler) DeleteAPIKey(c *gin.Context) {
+	user, ok := h.requireUser(c)
+	if !ok {
+		return
+	}
+	id, ok := parseAPIKeyID(c)
+	if !ok {
+		return
+	}
+	if err := h.queueService.DeleteAPIKey(c.Request.Context(), user, id); err != nil {
+		writeImageQueueError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"deleted": true})
 }
 
 // AdminConfig 返回管理员可见的生图并发配置。
@@ -879,6 +979,8 @@ func writeImageQueueError(c *gin.Context, err error) {
 		c.JSON(http.StatusNotFound, gin.H{"message": "生图 Session 不存在"})
 	case errors.Is(err, imagequeue.ErrJobNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"message": "生图任务不存在"})
+	case errors.Is(err, imagequeue.ErrAPIKeyNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"message": "生图 Key 不存在"})
 	case errors.Is(err, imagequeue.ErrForbidden):
 		c.JSON(http.StatusForbidden, gin.H{"message": "无权访问该生图任务"})
 	case errors.Is(err, imagequeue.ErrCancelNotAllowed):
@@ -921,6 +1023,15 @@ func parseMyImageRef(c *gin.Context) (int64, int, bool) {
 		return 0, 0, false
 	}
 	return taskID, imageIndex, true
+}
+
+func parseAPIKeyID(c *gin.Context) (int64, bool) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "生图 Key 编号无效"})
+		return 0, false
+	}
+	return id, true
 }
 
 func taskImageURL(job imagequeue.Job, imageIndex int) (string, error) {

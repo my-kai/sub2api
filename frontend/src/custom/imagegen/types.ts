@@ -52,6 +52,21 @@ export type ImageChargeStatus = 'none' | 'pending' | 'success' | 'failed' | 'ref
 export type ImageGenerationMode = 'generate' | 'edit'
 
 /**
+ * 用户侧固定使用的 OpenAI Image API 模型。
+ */
+export type ImageGenerationModel = 'gpt-image-2'
+
+/**
+ * OpenAI Image API 输出图片质量。
+ */
+export type ImageTaskQuality = 'auto' | 'low' | 'medium' | 'high'
+
+/**
+ * OpenAI Image API 输出格式。
+ */
+export type ImageOutputFormat = 'png' | 'jpeg' | 'webp'
+
+/**
  * 生图任务主体。
  */
 export interface ImageGenerationTask {
@@ -62,13 +77,13 @@ export interface ImageGenerationTask {
   status: ImageTaskStatus
   session_id?: number
   generation_mode?: ImageGenerationMode
-  source_image_task_id?: number
-  source_image_index?: number
   model: string
   prompt: string
   n: number
-  quality?: string
+  quality?: ImageTaskQuality | string
   size?: string
+  output_format?: ImageOutputFormat | string
+  output_compression?: number
   publish_to_gallery?: boolean
   charge_amount?: string
   charge_status?: ImageChargeStatus
@@ -152,23 +167,50 @@ export interface ImageSessionResponse {
 }
 
 /**
- * 创建生图任务请求。
+ * OpenAI `gpt-image-2` 图片生成请求字段。
  */
-export interface CreateImageTaskRequest {
-  session_id: number
-  model: string
+export interface ImageGenerationCreateRequest {
+  model: ImageGenerationModel
   prompt: string
   n: number
-  quality?: string
   size?: string
+  quality?: ImageTaskQuality
+  output_format?: ImageOutputFormat
+  output_compression?: number
+}
+
+/**
+ * 创建生图任务请求。
+ *
+ * `model/prompt/n/size/quality/output_format/output_compression` 对齐 OpenAI
+ * `gpt-image-2` Image API；`session_id` 和 `publish_to_gallery` 只属于本项目异步任务外壳。
+ */
+export interface CreateImageTaskRequest extends ImageGenerationCreateRequest {
+  session_id: number
+  /**
+   * 是否发布到公共图库；该字段不参与上游 Image API 请求。
+   */
   publish_to_gallery?: boolean
 }
 
 /**
+ * 当前编辑图引用。
+ *
+ * 页面只表达“当前编辑图片”，序列化成 OpenAI `image` 字段的细节由 API 层处理。
+ */
+export interface ImageEditSourceReference {
+  kind: 'current_task_image'
+  task_id: number
+  image_index: number
+}
+
+/**
  * 创建图片编辑任务请求。
+ *
+ * `image` 使用 OpenAI `images.edit` 语义：可以是浏览器上传的图片文件，也可以是后端可解析的当前编辑图引用。
  */
 export interface CreateImageEditTaskRequest extends CreateImageTaskRequest {
-  image: File
+  image: File | ImageEditSourceReference
 }
 
 /**
@@ -244,6 +286,44 @@ export interface ImagePriceQuoteParams {
 }
 
 /**
+ * 用户侧生图 OpenAI 兼容 Key。
+ *
+ * `key` 只会在创建成功响应里出现；列表页必须使用脱敏字段展示，避免再次暴露完整 Key。
+ */
+export interface ImageAPIKey {
+  id: number | string
+  name: string
+  key_prefix?: string
+  key_suffix?: string
+  masked_key?: string
+  key?: string
+  enabled: boolean
+  last_used_at?: string | null
+  created_at: string
+}
+
+/**
+ * 用户侧生图 Key 列表响应。
+ */
+export interface ImageAPIKeyListResponse {
+  items?: ImageAPIKey[] | null
+}
+
+/**
+ * 创建用户侧生图 Key 请求。
+ */
+export interface CreateImageAPIKeyRequest {
+  name: string
+}
+
+/**
+ * 创建用户侧生图 Key 响应。
+ */
+export interface CreateImageAPIKeyResponse {
+  api_key: ImageAPIKey
+}
+
+/**
  * 用户侧生图公开状态。
  */
 export interface ImageGenerationStatus {
@@ -259,13 +339,17 @@ export interface ImageQueueConfig {
   default_user_concurrency: number
   retention_days: number
   unit_prices: ImageUnitPrices
-  chatgpt2api: ImageUpstreamConfig
+  upstream_channels: ImageUpstreamChannel[]
+  /**
+   * Deprecated: 仅兼容旧后端响应；管理页保存时必须提交 upstream_channels。
+   */
+  chatgpt2api?: ImageUpstreamConfig
   updated_by_user_id?: number
   updated_at?: string
 }
 
 /**
- * chatgpt2api 管理页可见配置。
+ * 旧 chatgpt2api 响应兼容配置。
  *
  * auth-key 只返回是否已配置，不返回密钥明文。
  */
@@ -283,18 +367,52 @@ export interface ImageQueueConfigInput {
   default_user_concurrency: number
   retention_days: number
   unit_prices: ImageUnitPrices
-  chatgpt2api: ImageUpstreamConfigInput
+  upstream_channels: ImageUpstreamChannelInput[]
 }
 
 /**
- * chatgpt2api 管理页保存输入。
- *
- * auth_key 留空且 clear_auth_key 为 false 时，后端会保留当前密钥。
+ * custom 生图支持的上游渠道类型。
  */
-export interface ImageUpstreamConfigInput {
+export type ImageUpstreamChannelType = 'chatgpt2api' | 'openai'
+
+/**
+ * 管理页读取到的单个上游渠道。
+ *
+ * auth-key 不会回显，页面只能根据 auth_key_configured 展示保留或清空入口。
+ */
+export interface ImageUpstreamChannel {
+  id: string
+  name: string
+  type: ImageUpstreamChannelType
+  enabled: boolean
+  priority: number
+  base_url: string
+  auth_key_configured: boolean
+  retry_count: number
+}
+
+/**
+ * 管理页保存单个上游渠道的请求结构。
+ *
+ * auth_key 留空且 clear_auth_key 为 false 时，后端会按渠道 ID 保留当前密钥。
+ */
+export interface ImageUpstreamChannelInput {
+  id: string
+  name: string
+  type: ImageUpstreamChannelType
+  enabled: boolean
+  priority: number
   base_url: string
   auth_key: string
   clear_auth_key: boolean
+  retry_count: number
+}
+
+/**
+ * 管理页渠道表单比保存结构多 auth_key_configured，用于安全展示密钥状态。
+ */
+export interface ImageUpstreamChannelForm extends ImageUpstreamChannelInput {
+  auth_key_configured: boolean
 }
 
 /**

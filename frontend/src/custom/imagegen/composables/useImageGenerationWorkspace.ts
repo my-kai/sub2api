@@ -12,7 +12,13 @@ import {
   retryImageTask,
   setImageSessionCurrentImage,
 } from '../api'
-import type { ImageGenerationTask, ImagePriceQuote, ImageSession } from '../types'
+import type {
+  ImageEditSourceReference,
+  ImageGenerationModel,
+  ImageGenerationTask,
+  ImagePriceQuote,
+  ImageSession,
+} from '../types'
 import {
   aspectRatioLabel,
   clampImageCount,
@@ -42,6 +48,9 @@ import {
 import { useImageGenerationStatus } from './useImageGenerationStatus'
 import { useImageSessionTasks } from './useImageSessionTasks'
 import { usePendingEditImage } from './usePendingEditImage'
+
+const defaultOutputFormat = 'png' as const
+const defaultOutputCompression = 100
 
 /**
  * useImageGenerationWorkspace 承载用户生图页状态机。
@@ -109,6 +118,16 @@ export function useImageGenerationWorkspace() {
   const imageSize = computed(() => imageSizeFor(resolution.value, aspectRatio.value))
   const imagePriceText = computed(() => formatPriceQuote(priceQuote.value, priceLoading.value))
   const currentTaskImage = computed(() => resolveCurrentTaskImage(selectedSession.value, tasks.value))
+  const currentEditImageReference = computed<ImageEditSourceReference | null>(() => {
+    if (!selectedSession.value?.current_image_task_id || selectedSession.value.current_image_index === undefined) {
+      return null
+    }
+    return {
+      kind: 'current_task_image',
+      task_id: selectedSession.value.current_image_task_id,
+      image_index: selectedSession.value.current_image_index,
+    }
+  })
   const editPreviewImage = computed(() => {
     if (pendingEditImage.value) {
       return { src: pendingEditImage.value.src, alt: pendingEditImage.value.file.name || '待编辑图片' }
@@ -174,7 +193,7 @@ export function useImageGenerationWorkspace() {
   /**
    * 生图模型固定为 gpt-image-2；提交前统一读取这个值，避免浏览器旧状态残留其他模型。
    */
-  function selectedImageModel(): string {
+  function selectedImageModel(): ImageGenerationModel {
     if (selectedModel.value !== defaultImageModelID) {
       selectedModel.value = defaultImageModelID
     }
@@ -324,12 +343,15 @@ export function useImageGenerationWorkspace() {
         model: selectedImageModel(),
         prompt: trimmedPrompt,
         n: clampImageCount(count.value),
-        quality: quality.value,
         size: imageSize.value,
+        quality: quality.value,
+        output_format: defaultOutputFormat,
+        output_compression: defaultOutputCompression,
         publish_to_gallery: publishToGallery.value,
       }
-      const response = pendingEditImage.value
-        ? await createImageEditTask({ ...baseInput, image: pendingEditImage.value.file })
+      const editImage = pendingEditImage.value?.file ?? currentEditImageReference.value
+      const response = editImage
+        ? await createImageEditTask({ ...baseInput, image: editImage })
         : await createImageTaskWithBalance(baseInput)
       mergeTaskUpdates([response.task], true)
       prompt.value = ''

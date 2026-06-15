@@ -162,12 +162,13 @@ func (s *Store) GetConfig(ctx context.Context) (Config, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT enabled, platform_concurrency, default_user_concurrency, retention_days,
 		       unit_price_low, unit_price_medium, unit_price_high,
-		       chatgpt2api_base_url, chatgpt2api_auth_key, updated_by_user_id, updated_at
+		       chatgpt2api_base_url, chatgpt2api_auth_key, upstream_channels, updated_by_user_id, updated_at
 		FROM `+s.table("image_generation_config")+`
 		WHERE id = 1
 	`)
 	var cfg Config
 	var updatedBy sql.NullInt64
+	var channelsJSON []byte
 	if err := row.Scan(
 		&cfg.Enabled,
 		&cfg.PlatformConcurrency,
@@ -178,6 +179,7 @@ func (s *Store) GetConfig(ctx context.Context) (Config, error) {
 		&cfg.UnitPrices.FourK,
 		&cfg.ChatGPT2API.BaseURL,
 		&cfg.ChatGPT2API.AuthKey,
+		&channelsJSON,
 		&updatedBy,
 		&cfg.UpdatedAt,
 	); err != nil {
@@ -189,6 +191,11 @@ func (s *Store) GetConfig(ctx context.Context) (Config, error) {
 	cfg.UpdatedByUserID = nullInt64(updatedBy)
 	cfg.UpdatedAt = cfg.UpdatedAt.UTC()
 	cfg.ChatGPT2API.AuthKeyConfigured = strings.TrimSpace(cfg.ChatGPT2API.AuthKey) != ""
+	channels, err := decodeUpstreamChannels(channelsJSON)
+	if err != nil {
+		return Config{}, fmt.Errorf("decode image generation upstream channels: %w", err)
+	}
+	cfg.UpstreamChannels = channels
 	return cfg, nil
 }
 
@@ -201,9 +208,9 @@ func (s *Store) UpsertConfig(ctx context.Context, cfg Config) error {
 		INSERT INTO `+s.table("image_generation_config")+` (
 			id, enabled, platform_concurrency, default_user_concurrency, retention_days,
 			unit_price_auto, unit_price_low, unit_price_medium, unit_price_high,
-			chatgpt2api_base_url, chatgpt2api_auth_key, chatgpt2api_env_seeded,
+			chatgpt2api_base_url, chatgpt2api_auth_key, chatgpt2api_env_seeded, upstream_channels,
 			updated_by_user_id, updated_at
-		) VALUES (1, $1, $2, $3, $4, $5, $5, $6, $7, $8, $9, TRUE, $10, $11)
+		) VALUES (1, $1, $2, $3, $4, $5, $5, $6, $7, $8, $9, TRUE, $10::jsonb, $11, $12)
 		ON CONFLICT (id) DO UPDATE SET
 			enabled = EXCLUDED.enabled,
 			platform_concurrency = EXCLUDED.platform_concurrency,
@@ -216,16 +223,87 @@ func (s *Store) UpsertConfig(ctx context.Context, cfg Config) error {
 			chatgpt2api_base_url = EXCLUDED.chatgpt2api_base_url,
 			chatgpt2api_auth_key = EXCLUDED.chatgpt2api_auth_key,
 			chatgpt2api_env_seeded = TRUE,
+			upstream_channels = EXCLUDED.upstream_channels,
 			updated_by_user_id = EXCLUDED.updated_by_user_id,
 			updated_at = EXCLUDED.updated_at
 	`, cfg.Enabled, cfg.PlatformConcurrency, cfg.DefaultUserConcurrency, cfg.RetentionDays,
 		cfg.UnitPrices.OneK, cfg.UnitPrices.TwoK, cfg.UnitPrices.FourK,
 		cfg.ChatGPT2API.BaseURL, cfg.ChatGPT2API.AuthKey,
+		encodeUpstreamChannelsParam(cfg.UpstreamChannels),
 		nullInt64Param(cfg.UpdatedByUserID), cfg.UpdatedAt.UTC())
 	if err != nil {
 		return fmt.Errorf("upsert image generation config: %w", err)
 	}
 	return nil
+}
+
+func decodeUpstreamChannels(raw []byte) ([]UpstreamChannel, error) {
+	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "" {
+		return []UpstreamChannel{}, nil
+	}
+	var stored []upstreamChannelStorage
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		return nil, err
+	}
+	channels := make([]UpstreamChannel, 0, len(stored))
+	for index, item := range stored {
+		priority := defaultUpstreamChannelPriority(index)
+		if item.Priority != nil {
+			priority = *item.Priority
+		}
+		channels = append(channels, UpstreamChannel{
+			ID:                item.ID,
+			Name:              item.Name,
+			Type:              item.Type,
+			Enabled:           item.Enabled,
+			Priority:          priority,
+			BaseURL:           item.BaseURL,
+			AuthKey:           item.AuthKey,
+			AuthKeyConfigured: strings.TrimSpace(item.AuthKey) != "",
+			RetryCount:        item.RetryCount,
+		})
+	}
+	return channels, nil
+}
+
+func encodeUpstreamChannelsParam(channels []UpstreamChannel) string {
+	if channels == nil {
+		channels = []UpstreamChannel{}
+	}
+	stored := make([]upstreamChannelStorage, 0, len(channels))
+	for _, channel := range channels {
+		stored = append(stored, upstreamChannelStorage{
+			ID:         channel.ID,
+			Name:       channel.Name,
+			Type:       channel.Type,
+			Enabled:    channel.Enabled,
+			Priority:   intValuePtr(channel.Priority),
+			BaseURL:    channel.BaseURL,
+			AuthKey:    channel.AuthKey,
+			RetryCount: channel.RetryCount,
+		})
+	}
+	raw, err := json.Marshal(stored)
+	if err != nil {
+		return "[]"
+	}
+	return string(raw)
+}
+
+// upstreamChannelStorage 是 DB JSONB 的私有形态；公开 API 的 UpstreamChannel 必须隐藏 AuthKey。
+type upstreamChannelStorage struct {
+	ID         string              `json:"id"`
+	Name       string              `json:"name"`
+	Type       UpstreamChannelType `json:"type"`
+	Enabled    bool                `json:"enabled"`
+	Priority   *int                `json:"priority"`
+	BaseURL    string              `json:"base_url"`
+	AuthKey    string              `json:"auth_key"`
+	RetryCount int                 `json:"retry_count"`
+}
+
+func intValuePtr(value int) *int {
+	return &value
 }
 
 // SeedChatGPT2APIConfigFromEnv 把旧环境变量配置迁入 DB，且只在管理员尚未保存过页面配置时执行。
@@ -239,7 +317,22 @@ func (s *Store) SeedChatGPT2APIConfigFromEnv(ctx context.Context, baseURL string
 		UPDATE `+s.table("image_generation_config")+`
 		SET chatgpt2api_base_url = CASE WHEN chatgpt2api_base_url = '' THEN $1 ELSE chatgpt2api_base_url END,
 		    chatgpt2api_auth_key = CASE WHEN chatgpt2api_auth_key = '' THEN $2 ELSE chatgpt2api_auth_key END,
-		    chatgpt2api_env_seeded = TRUE
+		    chatgpt2api_env_seeded = TRUE,
+		    upstream_channels = CASE
+		        WHEN upstream_channels = '[]'::jsonb THEN jsonb_build_array(
+		            jsonb_build_object(
+		                'id', 'chatgpt2api',
+		                'name', 'chatgpt2api',
+		                'type', 'chatgpt2api',
+		                'enabled', TRUE,
+		                'priority', 100,
+		                'base_url', CASE WHEN chatgpt2api_base_url = '' THEN $1 ELSE chatgpt2api_base_url END,
+		                'auth_key', CASE WHEN chatgpt2api_auth_key = '' THEN $2 ELSE chatgpt2api_auth_key END,
+		                'retry_count', 10
+		            )
+		        )
+		        ELSE upstream_channels
+		    END
 		WHERE id = 1
 		  AND chatgpt2api_env_seeded = FALSE
 		  AND (chatgpt2api_base_url = '' OR chatgpt2api_auth_key = '')
@@ -300,6 +393,93 @@ func (s *Store) UpsertUserLimit(ctx context.Context, limit UserLimit) (UserLimit
 func (s *Store) DeleteUserLimit(ctx context.Context, userID int64) error {
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM `+s.table("image_generation_user_limits")+` WHERE user_id = $1`, userID); err != nil {
 		return fmt.Errorf("delete image generation user limit: %w", err)
+	}
+	return nil
+}
+
+// CreateAPIKey 保存用户生图 Key 元数据；明文 Key 不进入数据库。
+func (s *Store) CreateAPIKey(ctx context.Context, key APIKey, keyHash string) (APIKey, error) {
+	if key.CreatedAt.IsZero() {
+		key.CreatedAt = time.Now().UTC()
+	}
+	row := s.db.QueryRowContext(ctx, `
+		INSERT INTO `+s.table("image_generation_api_keys")+` (
+			user_id, name, key_prefix, key_suffix, key_hash, enabled, last_used_at, created_at, deleted_at
+		) VALUES ($1, $2, $3, $4, $5, $6, NULL, $7, NULL)
+		RETURNING id
+	`, key.UserID, key.Name, key.KeyPrefix, key.KeySuffix, keyHash, key.Enabled, key.CreatedAt.UTC())
+	if err := row.Scan(&key.ID); err != nil {
+		return APIKey{}, fmt.Errorf("create image generation api key: %w", err)
+	}
+	return s.GetAPIKey(ctx, key.UserID, key.ID)
+}
+
+// ListAPIKeys 返回当前用户未删除的生图 Key，完整明文永不从数据库恢复。
+func (s *Store) ListAPIKeys(ctx context.Context, userID int64) ([]APIKey, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT `+apiKeyColumns()+`
+		FROM `+s.table("image_generation_api_keys")+`
+		WHERE user_id = $1 AND deleted_at IS NULL
+		ORDER BY created_at DESC, id DESC
+	`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("query image generation api keys: %w", err)
+	}
+	defer rows.Close()
+	return scanAPIKeyRows(rows)
+}
+
+// GetAPIKey 读取当前用户自己的 Key 元数据。
+func (s *Store) GetAPIKey(ctx context.Context, userID int64, id int64) (APIKey, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT `+apiKeyColumns()+`
+		FROM `+s.table("image_generation_api_keys")+`
+		WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
+	`, id, userID)
+	return scanAPIKey(row)
+}
+
+// SoftDeleteAPIKey 软删除当前用户自己的生图 Key。
+func (s *Store) SoftDeleteAPIKey(ctx context.Context, userID int64, id int64, deletedAt time.Time) error {
+	if deletedAt.IsZero() {
+		deletedAt = time.Now().UTC()
+	}
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE `+s.table("image_generation_api_keys")+`
+		SET deleted_at = $1, enabled = FALSE
+		WHERE id = $2 AND user_id = $3 AND deleted_at IS NULL
+	`, deletedAt.UTC(), id, userID)
+	if err != nil {
+		return fmt.Errorf("delete image generation api key: %w", err)
+	}
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		return ErrAPIKeyNotFound
+	}
+	return nil
+}
+
+// APIKeyByHash 返回可用于外部 OpenAI 兼容接口的有效 Key。
+func (s *Store) APIKeyByHash(ctx context.Context, keyHash string) (APIKey, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT `+apiKeyColumns()+`
+		FROM `+s.table("image_generation_api_keys")+`
+		WHERE key_hash = $1 AND enabled = TRUE AND deleted_at IS NULL
+	`, keyHash)
+	return scanAPIKey(row)
+}
+
+// MarkAPIKeyUsed 记录最近使用时间；失败不应影响已经完成的鉴权结果。
+func (s *Store) MarkAPIKeyUsed(ctx context.Context, id int64, usedAt time.Time) error {
+	if usedAt.IsZero() {
+		usedAt = time.Now().UTC()
+	}
+	if _, err := s.db.ExecContext(ctx, `
+		UPDATE `+s.table("image_generation_api_keys")+`
+		SET last_used_at = $1
+		WHERE id = $2
+	`, usedAt.UTC(), id); err != nil {
+		return fmt.Errorf("mark image generation api key used: %w", err)
 	}
 	return nil
 }
@@ -567,15 +747,15 @@ func (s *Store) createJobWithExecutor(ctx context.Context, exec sqlExecutor, job
 		INSERT INTO `+s.table("image_generation_jobs")+` (
 			user_id, username, email, status, session_id, generation_mode,
 			source_image_task_id, source_image_index, source_image_bytes, source_image_filename,
-			source_image_content_type, model, prompt, n, quality, size, publish_to_gallery,
+			source_image_content_type, model, prompt, n, quality, size, output_format, output_compression, publish_to_gallery,
 			charge_amount, charge_status, balance_idempotency_key, charge_message,
 			result_json, error_message, created_at, started_at, finished_at
 		) VALUES (
 			$1, $2, $3, $4, $5, $6,
 			$7, $8, $9, $10,
-			$11, $12, $13, $14, $15, $16, $17,
-			$18, $19, $20, $21,
-			$22::jsonb, $23, $24, $25, $26
+			$11, $12, $13, $14, $15, $16, $17, $18, $19,
+			$20, $21, $22, $23,
+			$24::jsonb, $25, $26, $27, $28
 		)
 		RETURNING id
 	`, job.UserID, nullStringParam(job.Username), nullStringParam(job.Email), job.Status,
@@ -583,7 +763,8 @@ func (s *Store) createJobWithExecutor(ctx context.Context, exec sqlExecutor, job
 		nullIntParam(job.SourceImageIndex), nullBytesParam(job.SourceImageBytes),
 		nullStringParam(job.SourceImageFilename), nullStringParam(job.SourceImageContentType),
 		job.Model, job.Prompt, job.N, nullStringParam(job.Quality), nullStringParam(job.Size),
-		job.PublishToGallery, job.ChargeAmount, job.ChargeStatus, nullStringParam(job.BalanceIdempotencyKey),
+		nullStringParam(job.OutputFormat), nullIntParam(job.OutputCompression), job.PublishToGallery,
+		job.ChargeAmount, job.ChargeStatus, nullStringParam(job.BalanceIdempotencyKey),
 		nullStringParam(job.ChargeMessage), resultJSON, nullStringParam(job.ErrorMessage),
 		job.CreatedAt.UTC(), nullTimeParam(job.StartedAt), nullTimeParam(job.FinishedAt))
 	if err := row.Scan(&job.ID); err != nil {
@@ -1001,9 +1182,13 @@ func sessionColumns() string {
 func jobColumns() string {
 	return `id, user_id, username, email, status, session_id, generation_mode,
 		source_image_task_id, source_image_index, source_image_bytes, source_image_filename,
-		source_image_content_type, model, prompt, n, quality, size, publish_to_gallery,
+		source_image_content_type, model, prompt, n, quality, size, output_format, output_compression, publish_to_gallery,
 		charge_amount, charge_status, balance_idempotency_key, charge_message,
 		result_json, error_message, created_at, started_at, finished_at`
+}
+
+func apiKeyColumns() string {
+	return `id, user_id, name, key_prefix, key_suffix, enabled, last_used_at, created_at, deleted_at`
 }
 
 func scanSession(row interface{ Scan(dest ...any) error }) (Session, error) {
@@ -1070,18 +1255,61 @@ func scanJobRows(rows *sql.Rows) ([]Job, error) {
 	return items, rows.Err()
 }
 
+func scanAPIKey(row interface{ Scan(dest ...any) error }) (APIKey, error) {
+	key, err := scanAPIKeyAny(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return APIKey{}, ErrAPIKeyNotFound
+	}
+	return key, err
+}
+
+func scanAPIKeyRows(rows *sql.Rows) ([]APIKey, error) {
+	items := []APIKey{}
+	for rows.Next() {
+		item, err := scanAPIKeyAny(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func scanAPIKeyAny(row interface{ Scan(dest ...any) error }) (APIKey, error) {
+	var key APIKey
+	var suffix sql.NullString
+	var lastUsedAt, deletedAt sql.NullTime
+	if err := row.Scan(
+		&key.ID, &key.UserID, &key.Name, &key.KeyPrefix, &suffix, &key.Enabled, &lastUsedAt, &key.CreatedAt, &deletedAt,
+	); err != nil {
+		return APIKey{}, err
+	}
+	key.KeySuffix = nullString(suffix)
+	key.MaskedKey = maskedAPIKey(key.KeyPrefix, key.KeySuffix)
+	key.CreatedAt = key.CreatedAt.UTC()
+	if lastUsedAt.Valid {
+		value := lastUsedAt.Time.UTC()
+		key.LastUsedAt = &value
+	}
+	if deletedAt.Valid {
+		value := deletedAt.Time.UTC()
+		key.DeletedAt = &value
+	}
+	return key, nil
+}
+
 func scanJobAny(row interface{ Scan(dest ...any) error }) (Job, error) {
 	var job Job
-	var username, email, quality, size, balanceKey, chargeMessage, resultJSON, errorMessage sql.NullString
+	var username, email, quality, size, outputFormat, balanceKey, chargeMessage, resultJSON, errorMessage sql.NullString
 	var sessionID, sourceTaskID sql.NullInt64
-	var sourceIndex sql.NullInt64
+	var sourceIndex, outputCompression sql.NullInt64
 	var sourceBytes []byte
 	var sourceFilename, sourceContentType sql.NullString
 	var startedAt, finishedAt sql.NullTime
 	err := row.Scan(
 		&job.ID, &job.UserID, &username, &email, &job.Status, &sessionID, &job.GenerationMode,
 		&sourceTaskID, &sourceIndex, &sourceBytes, &sourceFilename, &sourceContentType,
-		&job.Model, &job.Prompt, &job.N, &quality, &size, &job.PublishToGallery,
+		&job.Model, &job.Prompt, &job.N, &quality, &size, &outputFormat, &outputCompression, &job.PublishToGallery,
 		&job.ChargeAmount, &job.ChargeStatus, &balanceKey, &chargeMessage,
 		&resultJSON, &errorMessage, &job.CreatedAt, &startedAt, &finishedAt,
 	)
@@ -1101,6 +1329,11 @@ func scanJobAny(row interface{ Scan(dest ...any) error }) (Job, error) {
 	job.SourceImageContentType = nullString(sourceContentType)
 	job.Quality = nullString(quality)
 	job.Size = nullString(size)
+	job.OutputFormat = nullString(outputFormat)
+	if outputCompression.Valid {
+		value := int(outputCompression.Int64)
+		job.OutputCompression = &value
+	}
 	job.BalanceIdempotencyKey = nullString(balanceKey)
 	job.ChargeMessage = nullString(chargeMessage)
 	job.ErrorMessage = nullString(errorMessage)

@@ -42,7 +42,7 @@
                   {{ selectedModel }}
                 </span>
               </div>
-              <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">输入提示词创建图片，也可以上传图片做编辑。</p>
+              <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">每次会话都是一个场景，第一次是文生图，后续为编辑图。</p>
             </div>
 
             <div class="flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
@@ -172,7 +172,7 @@
               <img :src="editPreviewImage.src" :alt="editPreviewImage.alt" class="h-11 w-11 rounded-md object-cover" />
               <div class="min-w-0 flex-1">
                 <div class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
-                  <span class="text-sm font-medium text-blue-900 dark:text-blue-100">{{ pendingEditImage ? '已选择上传图片' : '已指定编辑图片' }}</span>
+                  <span class="text-sm font-medium text-blue-900 dark:text-blue-100">{{ pendingEditImage ? '已选择编辑图片' : '已指定编辑图片' }}</span>
                   <span class="truncate text-xs text-blue-700 dark:text-blue-300">{{ editPreviewImage.alt }}</span>
                 </div>
               </div>
@@ -219,7 +219,7 @@
                 <input ref="fileInputRef" type="file" accept="image/*" class="hidden" @change="handleFileInput" />
                 <button type="button" class="btn btn-secondary shrink-0 whitespace-nowrap" :disabled="submitting" @click="fileInputRef?.click()">
                   <Icon name="upload" size="sm" />
-                  <span>上传图片</span>
+                  <span>选择图片</span>
                 </button>
                 <button type="submit" class="btn btn-primary shrink-0 whitespace-nowrap" :disabled="submitting">
                   <Icon v-if="submitting" name="refresh" size="sm" class="animate-spin" />
@@ -269,6 +269,7 @@
               </div>
             </dl>
           </section>
+
         </aside>
       </div>
     </div>

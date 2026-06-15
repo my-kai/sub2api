@@ -2,12 +2,18 @@ package imagequeue
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"math/big"
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,10 +29,15 @@ const (
 	defaultImageModel       = DefaultImageModel
 	defaultImageSessionName = "新会话"
 	// maxQueuedImageCount 是单个队列任务允许保存的总图数；worker 会按上游单次限制拆批执行。
-	maxQueuedImageCount   = 100
-	maxUploadedImageBytes = 64 << 20
-	maxPromptLength       = 8000
-	maxSessionTitleLen    = 80
+	maxQueuedImageCount    = 100
+	maxUploadedImageBytes  = 64 << 20
+	maxPromptLength        = 8000
+	maxSessionTitleLen     = 80
+	apiKeyPrefix           = "sk-img-"
+	apiKeyDisplayPrefixLen = 16
+	apiKeyDisplaySuffixLen = 6
+	apiKeyRandomBytes      = 32
+	maxAPIKeyNameLen       = 80
 )
 
 // ImageClient 是 worker 调用 chatgpt2api 所需的窄接口。
@@ -49,7 +60,12 @@ func (s *Service) ChatGPT2APIRuntimeConfig(ctx context.Context) (chatgpt2api.Run
 	if err != nil {
 		return chatgpt2api.RuntimeConfig{}, err
 	}
-	return chatgpt2api.NewRuntimeConfig(cfg.ChatGPT2API.BaseURL, cfg.ChatGPT2API.AuthKey)
+	for _, channel := range normalizeUpstreamChannels(cfg.UpstreamChannels) {
+		if channel.Type == UpstreamChannelTypeChatGPT2API && channel.Enabled {
+			return chatgpt2api.NewRuntimeConfig(channel.BaseURL, channel.AuthKey)
+		}
+	}
+	return chatgpt2api.RuntimeConfig{}, nil
 }
 
 type taskSourceSnapshot struct {
@@ -251,6 +267,60 @@ func (s *Service) CreateTask(ctx context.Context, user runtime.UserProfile, inpu
 	return s.createTask(ctx, user, input, nil)
 }
 
+// CreateOpenAITask 为 OpenAI 兼容接口创建队列任务。
+//
+// OpenAI Image API 没有 session_id 概念；这里为每次外部调用自动创建一个服务端 Session，
+// 这样仍可复用现有扣费、并发、failover、历史记录和编辑任务持久化链路。
+func (s *Service) CreateOpenAITask(ctx context.Context, user runtime.UserProfile, input CreateJobInput) (Job, error) {
+	if user.ID <= 0 {
+		return Job{}, fmt.Errorf("%w: user id is required", ErrInvalidInput)
+	}
+	if input.SessionID <= 0 {
+		session, err := s.createSessionWithDefaultTitle(ctx, user)
+		if err != nil {
+			return Job{}, err
+		}
+		input.SessionID = session.ID
+	}
+	return s.CreateTask(ctx, user, input)
+}
+
+// WaitTaskTerminal 阻塞等待任务进入终态；超时只影响本次同步响应，不撤销后台任务。
+func (s *Service) WaitTaskTerminal(ctx context.Context, user runtime.UserProfile, id int64, timeout time.Duration) (Job, error) {
+	if timeout <= 0 {
+		timeout = 180 * time.Second
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	events, cleanup := s.SubscribeTaskEvents(waitCtx)
+	defer cleanup()
+
+	for {
+		job, err := s.Task(waitCtx, user, id)
+		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				return Job{}, ErrTaskWaitTimeout
+			}
+			return Job{}, err
+		}
+		if IsTerminal(job.Status) {
+			return job, nil
+		}
+
+		select {
+		case <-waitCtx.Done():
+			return Job{}, ErrTaskWaitTimeout
+		case _, ok := <-events:
+			if !ok {
+				return Job{}, ErrTaskWaitTimeout
+			}
+		case <-time.After(time.Second):
+			// 定时轮询兜底多实例或进程重启场景下错过内存事件的问题。
+		}
+	}
+}
+
 func (s *Service) createTask(ctx context.Context, user runtime.UserProfile, input CreateJobInput, retrySource *taskSourceSnapshot) (Job, error) {
 	if user.ID <= 0 {
 		return Job{}, fmt.Errorf("%w: user id is required", ErrInvalidInput)
@@ -282,6 +352,13 @@ func (s *Service) createTask(ctx context.Context, user runtime.UserProfile, inpu
 	generationMode := GenerationModeGenerate
 	sourceImageTaskID := int64(0)
 	var sourceImageIndex *int
+	if normalized.SourceImageTaskID > 0 && normalized.SourceImageIndex != nil {
+		if err := s.validateImageReference(ctx, user.ID, session.ID, normalized.SourceImageTaskID, *normalized.SourceImageIndex); err != nil {
+			return Job{}, err
+		}
+		sourceImageTaskID = normalized.SourceImageTaskID
+		sourceImageIndex = copyInt(normalized.SourceImageIndex)
+	}
 	sourceImageBytes := normalized.SourceImageBytes
 	sourceImageFilename := normalized.SourceImageFilename
 	sourceImageContentType := normalized.SourceImageContentType
@@ -308,7 +385,7 @@ func (s *Service) createTask(ctx context.Context, user runtime.UserProfile, inpu
 		if generationMode != GenerationModeGenerate && generationMode != GenerationModeEdit {
 			return Job{}, fmt.Errorf("%w: generation_mode is invalid", ErrInvalidInput)
 		}
-	} else if len(sourceImageBytes) > 0 {
+	} else if len(sourceImageBytes) > 0 || (sourceImageTaskID > 0 && sourceImageIndex != nil) {
 		generationMode = GenerationModeEdit
 	} else if session.CurrentImageTaskID > 0 && session.CurrentImageIndex != nil {
 		if err := s.validateImageReference(ctx, user.ID, session.ID, session.CurrentImageTaskID, *session.CurrentImageIndex); err != nil {
@@ -337,6 +414,8 @@ func (s *Service) createTask(ctx context.Context, user runtime.UserProfile, inpu
 		N:                      normalized.N,
 		Quality:                normalized.Quality,
 		Size:                   normalized.Size,
+		OutputFormat:           normalized.OutputFormat,
+		OutputCompression:      copyInt(normalized.OutputCompression),
 		PublishToGallery:       normalized.PublishToGallery,
 		ChargeAmount:           price.TotalPrice,
 		ChargeStatus:           ChargeStatusPending,
@@ -375,13 +454,15 @@ func (s *Service) RetryTask(ctx context.Context, user runtime.UserProfile, id in
 		return Job{}, ErrRetryNotAllowed
 	}
 	return s.createTask(ctx, user, CreateJobInput{
-		SessionID:        source.SessionID,
-		Model:            source.Model,
-		Prompt:           source.Prompt,
-		N:                source.N,
-		Quality:          source.Quality,
-		Size:             source.Size,
-		PublishToGallery: source.PublishToGallery,
+		SessionID:         source.SessionID,
+		Model:             source.Model,
+		Prompt:            source.Prompt,
+		N:                 source.N,
+		Quality:           source.Quality,
+		Size:              source.Size,
+		OutputFormat:      source.OutputFormat,
+		OutputCompression: copyInt(source.OutputCompression),
+		PublishToGallery:  source.PublishToGallery,
 	}, retrySourceSnapshotFromJob(source))
 }
 
@@ -451,7 +532,9 @@ func (s *Service) Config(ctx context.Context) (Config, error) {
 		return Config{}, err
 	}
 	cfg.UnitPrices = withDefaultUnitPrices(cfg.UnitPrices)
-	cfg.ChatGPT2API = sanitizeUpstreamConfig(cfg.ChatGPT2API)
+	compat := firstChatGPT2APICompatConfig(cfg.UpstreamChannels)
+	cfg.UpstreamChannels = sanitizeUpstreamChannels(cfg.UpstreamChannels)
+	cfg.ChatGPT2API = compat
 	return cfg, nil
 }
 
@@ -470,16 +553,18 @@ func (s *Service) UpdateConfig(ctx context.Context, input ConfigInput, admin run
 	if err != nil {
 		return Config{}, err
 	}
-	upstream := mergeUpstreamConfigInput(current.ChatGPT2API, input.ChatGPT2API)
+	channels := mergeUpstreamChannelInputs(current, input)
 	cfg := Config{
 		Enabled:                configInputEnabled(input, current.Enabled),
 		PlatformConcurrency:    input.PlatformConcurrency,
 		DefaultUserConcurrency: input.DefaultUserConcurrency,
 		RetentionDays:          input.RetentionDays,
 		UnitPrices:             withDefaultUnitPrices(normalizeUnitPriceInput(input.UnitPrices)),
-		ChatGPT2API:            upstream,
-		UpdatedByUserID:        admin.ID,
-		UpdatedAt:              s.now(),
+		UpstreamChannels:       channels,
+		// 运行路径只读 UpstreamChannels；旧列同步第一条 chatgpt2api 渠道，方便回滚旧实现。
+		ChatGPT2API:     firstChatGPT2APIRawConfig(channels),
+		UpdatedByUserID: admin.ID,
+		UpdatedAt:       s.now(),
 	}
 	if err := validateConfig(cfg); err != nil {
 		return Config{}, err
@@ -487,7 +572,9 @@ func (s *Service) UpdateConfig(ctx context.Context, input ConfigInput, admin run
 	if err := s.store.UpsertConfig(ctx, cfg); err != nil {
 		return Config{}, err
 	}
-	cfg.ChatGPT2API = sanitizeUpstreamConfig(cfg.ChatGPT2API)
+	compat := firstChatGPT2APICompatConfig(cfg.UpstreamChannels)
+	cfg.UpstreamChannels = sanitizeUpstreamChannels(cfg.UpstreamChannels)
+	cfg.ChatGPT2API = compat
 	return cfg, nil
 }
 
@@ -563,6 +650,75 @@ func (s *Service) DeleteUserLimit(ctx context.Context, userID int64) error {
 		return fmt.Errorf("%w: user id is required", ErrInvalidInput)
 	}
 	return s.store.DeleteUserLimit(ctx, userID)
+}
+
+// APIKeys 返回当前用户的生图 Key 脱敏列表。
+func (s *Service) APIKeys(ctx context.Context, user runtime.UserProfile) ([]APIKey, error) {
+	if user.ID <= 0 {
+		return nil, fmt.Errorf("%w: user id is required", ErrInvalidInput)
+	}
+	items, err := s.store.ListAPIKeys(ctx, user.ID)
+	if err != nil {
+		return nil, err
+	}
+	if items == nil {
+		items = []APIKey{}
+	}
+	return items, nil
+}
+
+// CreateAPIKey 创建一条用户生图 Key；完整明文只随本次响应返回。
+func (s *Service) CreateAPIKey(ctx context.Context, user runtime.UserProfile, input CreateAPIKeyInput) (APIKey, error) {
+	if user.ID <= 0 {
+		return APIKey{}, fmt.Errorf("%w: user id is required", ErrInvalidInput)
+	}
+	name, err := normalizeAPIKeyName(input.Name)
+	if err != nil {
+		return APIKey{}, err
+	}
+	plaintext, err := generateAPIKeyPlaintext()
+	if err != nil {
+		return APIKey{}, err
+	}
+	key := APIKey{
+		UserID:       user.ID,
+		Name:         name,
+		KeyPrefix:    apiKeyDisplayPrefix(plaintext),
+		KeySuffix:    apiKeyDisplaySuffix(plaintext),
+		PlaintextKey: plaintext,
+		Enabled:      true,
+		CreatedAt:    s.now(),
+	}
+	created, err := s.store.CreateAPIKey(ctx, key, HashAPIKey(plaintext))
+	if err != nil {
+		return APIKey{}, err
+	}
+	created.PlaintextKey = plaintext
+	created.MaskedKey = maskedAPIKey(created.KeyPrefix, created.KeySuffix)
+	return created, nil
+}
+
+// DeleteAPIKey 软删除当前用户自己的生图 Key。
+func (s *Service) DeleteAPIKey(ctx context.Context, user runtime.UserProfile, id int64) error {
+	if user.ID <= 0 || id <= 0 {
+		return fmt.Errorf("%w: api key id is required", ErrInvalidInput)
+	}
+	return s.store.SoftDeleteAPIKey(ctx, user.ID, id, s.now())
+}
+
+// UserForAPIKey 解析 OpenAI 兼容生图 Key，供无需登录态的开放接口恢复任务归属用户。
+func (s *Service) UserForAPIKey(ctx context.Context, plaintext string) (runtime.UserProfile, APIKey, error) {
+	if strings.TrimSpace(plaintext) == "" {
+		return runtime.UserProfile{}, APIKey{}, ErrAPIKeyNotFound
+	}
+	key, err := s.store.APIKeyByHash(ctx, HashAPIKey(plaintext))
+	if err != nil {
+		return runtime.UserProfile{}, APIKey{}, err
+	}
+	if err := s.store.MarkAPIKeyUsed(ctx, key.ID, s.now()); err != nil {
+		log.Printf("[WARN] mark image generation api key used failed: key_id=%d user_id=%d reason=%q", key.ID, key.UserID, err.Error())
+	}
+	return runtime.UserProfile{ID: key.UserID, Role: "user"}, key, nil
 }
 
 // SubscribeTaskEvents 订阅任务变化事件；SSE 端用它触发当前 Session 快照刷新。
@@ -664,7 +820,11 @@ func normalizeCreateInput(input CreateJobInput) (CreateJobInput, error) {
 		N:                      count,
 		Quality:                normalizeQuality(input.Quality),
 		Size:                   normalizeSize(input.Size),
+		OutputFormat:           normalizeOutputFormat(input.OutputFormat),
+		OutputCompression:      normalizeOutputCompression(input.OutputCompression),
 		PublishToGallery:       input.PublishToGallery,
+		SourceImageTaskID:      input.SourceImageTaskID,
+		SourceImageIndex:       copyInt(input.SourceImageIndex),
 		SourceImageBytes:       input.SourceImageBytes,
 		SourceImageFilename:    strings.TrimSpace(input.SourceImageFilename),
 		SourceImageContentType: strings.TrimSpace(input.SourceImageContentType),
@@ -682,6 +842,84 @@ func normalizeCreateInput(input CreateJobInput) (CreateJobInput, error) {
 		return CreateJobInput{}, err
 	}
 	return normalized, nil
+}
+
+func normalizeAPIKeyName(raw string) (string, error) {
+	name := strings.TrimSpace(raw)
+	if name == "" {
+		return "", fmt.Errorf("%w: api key name is required", ErrInvalidInput)
+	}
+	if len([]rune(name)) > maxAPIKeyNameLen {
+		return "", fmt.Errorf("%w: api key name is too long", ErrInvalidInput)
+	}
+	return name, nil
+}
+
+func generateAPIKeyPlaintext() (string, error) {
+	buf := make([]byte, apiKeyRandomBytes)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("generate image generation api key: %w", err)
+	}
+	return apiKeyPrefix + base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
+// HashAPIKey 返回生图 Key 的稳定查找摘要；调用方不可把明文写入数据库。
+func HashAPIKey(plaintext string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(plaintext)))
+	return hex.EncodeToString(sum[:])
+}
+
+func apiKeyDisplayPrefix(plaintext string) string {
+	runes := []rune(strings.TrimSpace(plaintext))
+	if len(runes) <= apiKeyDisplayPrefixLen {
+		return string(runes)
+	}
+	return string(runes[:apiKeyDisplayPrefixLen])
+}
+
+func apiKeyDisplaySuffix(plaintext string) string {
+	runes := []rune(strings.TrimSpace(plaintext))
+	if len(runes) <= apiKeyDisplaySuffixLen {
+		return ""
+	}
+	return string(runes[len(runes)-apiKeyDisplaySuffixLen:])
+}
+
+func maskedAPIKey(prefix string, suffix string) string {
+	prefix = strings.TrimSpace(prefix)
+	suffix = strings.TrimSpace(suffix)
+	if prefix == "" {
+		return ""
+	}
+	if suffix == "" {
+		return prefix + "..."
+	}
+	return prefix + "..." + suffix
+}
+
+func normalizeOutputFormat(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "png":
+		return "png"
+	case "jpeg", "webp":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return ""
+	}
+}
+
+func normalizeOutputCompression(value *int) *int {
+	if value == nil {
+		return nil
+	}
+	normalized := *value
+	if normalized < 0 {
+		normalized = 0
+	}
+	if normalized > 100 {
+		normalized = 100
+	}
+	return &normalized
 }
 
 func normalizeUploadedImageSource(input *CreateJobInput) error {
@@ -864,10 +1102,177 @@ func validateConfig(cfg Config) error {
 	if err := validateUnitPrices(cfg.UnitPrices); err != nil {
 		return err
 	}
-	if err := validateUpstreamConfig(cfg.ChatGPT2API); err != nil {
+	if err := validateUpstreamChannels(cfg.UpstreamChannels); err != nil {
 		return err
 	}
 	return nil
+}
+
+func mergeUpstreamChannelInputs(current Config, input ConfigInput) []UpstreamChannel {
+	if len(input.UpstreamChannels) == 0 && !hasUpstreamConfigInput(input.ChatGPT2API) {
+		return normalizeUpstreamChannels(current.UpstreamChannels)
+	}
+	if len(input.UpstreamChannels) == 0 && hasUpstreamConfigInput(input.ChatGPT2API) {
+		compat := mergeUpstreamConfigInput(firstChatGPT2APICompatConfig(current.UpstreamChannels), input.ChatGPT2API)
+		return normalizeUpstreamChannels([]UpstreamChannel{{
+			ID:         string(UpstreamChannelTypeChatGPT2API),
+			Name:       "chatgpt2api",
+			Type:       UpstreamChannelTypeChatGPT2API,
+			Enabled:    true,
+			Priority:   defaultUpstreamChannelPriority(0),
+			BaseURL:    compat.BaseURL,
+			AuthKey:    compat.AuthKey,
+			RetryCount: maxImageQuotaRetries,
+		}})
+	}
+	currentByID := map[string]UpstreamChannel{}
+	for _, channel := range current.UpstreamChannels {
+		currentByID[strings.TrimSpace(channel.ID)] = channel
+	}
+	channels := make([]UpstreamChannel, 0, len(input.UpstreamChannels))
+	for index, item := range input.UpstreamChannels {
+		id := strings.TrimSpace(item.ID)
+		if id == "" {
+			id = fmt.Sprintf("%s-%d", strings.TrimSpace(string(item.Type)), index+1)
+		}
+		previous := currentByID[id]
+		authKey := strings.TrimSpace(previous.AuthKey)
+		if item.ClearAuthKey {
+			authKey = ""
+		} else if strings.TrimSpace(item.AuthKey) != "" {
+			authKey = strings.TrimSpace(item.AuthKey)
+		}
+		enabled := true
+		if item.Enabled != nil {
+			enabled = *item.Enabled
+		}
+		priority := defaultUpstreamChannelPriority(index)
+		if item.Priority != nil {
+			priority = *item.Priority
+		}
+		channels = append(channels, UpstreamChannel{
+			ID:         id,
+			Name:       strings.TrimSpace(item.Name),
+			Type:       item.Type,
+			Enabled:    enabled,
+			Priority:   priority,
+			BaseURL:    strings.TrimSpace(item.BaseURL),
+			AuthKey:    authKey,
+			RetryCount: item.RetryCount,
+		})
+	}
+	return normalizeUpstreamChannels(channels)
+}
+
+func hasUpstreamConfigInput(input UpstreamConfigInput) bool {
+	return strings.TrimSpace(input.BaseURL) != "" || strings.TrimSpace(input.AuthKey) != "" || input.ClearAuthKey
+}
+
+func normalizeUpstreamChannels(channels []UpstreamChannel) []UpstreamChannel {
+	if channels == nil {
+		return []UpstreamChannel{}
+	}
+	normalized := make([]UpstreamChannel, 0, len(channels))
+	for index, channel := range channels {
+		channel.ID = strings.TrimSpace(channel.ID)
+		if channel.ID == "" {
+			channel.ID = fmt.Sprintf("%s-%d", strings.TrimSpace(string(channel.Type)), index+1)
+		}
+		channel.Name = strings.TrimSpace(channel.Name)
+		if channel.Name == "" {
+			channel.Name = defaultUpstreamChannelName(channel.Type)
+		}
+		channel.BaseURL = strings.TrimSpace(channel.BaseURL)
+		channel.AuthKey = strings.TrimSpace(channel.AuthKey)
+		channel.AuthKeyConfigured = channel.AuthKey != ""
+		normalized = append(normalized, channel)
+	}
+	sort.SliceStable(normalized, func(i, j int) bool {
+		return normalized[i].Priority < normalized[j].Priority
+	})
+	return normalized
+}
+
+func sanitizeUpstreamChannels(channels []UpstreamChannel) []UpstreamChannel {
+	sanitized := normalizeUpstreamChannels(channels)
+	for index := range sanitized {
+		sanitized[index].AuthKey = ""
+	}
+	return sanitized
+}
+
+func firstChatGPT2APICompatConfig(channels []UpstreamChannel) UpstreamConfig {
+	return sanitizeUpstreamConfig(firstChatGPT2APIRawConfig(channels))
+}
+
+func firstChatGPT2APIRawConfig(channels []UpstreamChannel) UpstreamConfig {
+	for _, channel := range normalizeUpstreamChannels(channels) {
+		if channel.Type == UpstreamChannelTypeChatGPT2API {
+			return UpstreamConfig{
+				BaseURL: channel.BaseURL,
+				AuthKey: channel.AuthKey,
+			}
+		}
+	}
+	return UpstreamConfig{}
+}
+
+func defaultUpstreamChannelName(channelType UpstreamChannelType) string {
+	switch channelType {
+	case UpstreamChannelTypeChatGPT2API:
+		return "chatgpt2api"
+	case UpstreamChannelTypeOpenAI:
+		return "OpenAI"
+	default:
+		return "上游渠道"
+	}
+}
+
+// defaultUpstreamChannelPriority 用列表顺序给旧数据补稳定优先级，避免老配置升级后调度顺序变化。
+func defaultUpstreamChannelPriority(index int) int {
+	if index < 0 {
+		index = 0
+	}
+	return (index + 1) * 100
+}
+
+func validateUpstreamChannels(channels []UpstreamChannel) error {
+	seen := map[string]struct{}{}
+	for _, channel := range normalizeUpstreamChannels(channels) {
+		if _, ok := seen[channel.ID]; ok {
+			return fmt.Errorf("%w: upstream channel id is duplicated", ErrInvalidInput)
+		}
+		seen[channel.ID] = struct{}{}
+		switch channel.Type {
+		case UpstreamChannelTypeChatGPT2API, UpstreamChannelTypeOpenAI:
+		default:
+			return fmt.Errorf("%w: upstream channel type is invalid", ErrInvalidInput)
+		}
+		if channel.RetryCount < 0 {
+			return fmt.Errorf("%w: upstream channel retry_count must be at least 0", ErrInvalidInput)
+		}
+		if err := validateChannelBaseURL(channel.Type, channel.BaseURL); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateChannelBaseURL(channelType UpstreamChannelType, rawBaseURL string) error {
+	baseURL := strings.TrimSpace(rawBaseURL)
+	if baseURL == "" {
+		return nil
+	}
+	parsed, err := url.Parse(baseURL)
+	if err != nil || parsed.Host == "" {
+		return fmt.Errorf("%w: %s base_url is invalid", ErrInvalidInput, channelType)
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https":
+		return nil
+	default:
+		return fmt.Errorf("%w: %s base_url scheme is invalid", ErrInvalidInput, channelType)
+	}
 }
 
 func mergeUpstreamConfigInput(current UpstreamConfig, input UpstreamConfigInput) UpstreamConfig {

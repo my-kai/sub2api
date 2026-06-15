@@ -5,12 +5,15 @@ package chatgpt2api
 // 字段保持与 chatgpt2api 的 OpenAI 兼容图片生成接口一致；response_format 由后端固定为 url，
 // 让任务结果只保存 2api 返回的图片链接，避免把大块图片内容写入数据库。
 type ImageGenerationRequest struct {
-	Model          string `json:"model"`
-	Prompt         string `json:"prompt"`
-	N              int    `json:"n"`
-	Quality        string `json:"quality,omitempty"`
-	Size           string `json:"size,omitempty"`
-	ResponseFormat string `json:"response_format"`
+	Model   string `json:"model"`
+	Prompt  string `json:"prompt"`
+	N       int    `json:"n"`
+	Quality string `json:"quality,omitempty"`
+	Size    string `json:"size,omitempty"`
+	// OutputFormat/OutputCompression 只给支持官方 GPT Image 字段的渠道使用；chatgpt2api 当前忽略。
+	OutputFormat      string `json:"-"`
+	OutputCompression int    `json:"-"`
+	ResponseFormat    string `json:"response_format"`
 }
 
 // ImageEditRequest 是 OpenAI 兼容图片编辑接口所需的请求载荷。
@@ -18,15 +21,17 @@ type ImageGenerationRequest struct {
 // ImageURL 直接复用已完成任务里保存的 2api 图片链接；客户端会在请求上游前临时下载为 multipart，
 // 避免 basketikun/chatgpt2api 对 image_url 固定 60 秒拉图超时先于本服务超时配置失败。
 type ImageEditRequest struct {
-	Model          string
-	Prompt         string
-	N              int
-	Quality        string
-	Size           string
-	ResponseFormat string
-	ImageURL       string
-	ImageBytes     []byte
-	ImageFilename  string
+	Model             string
+	Prompt            string
+	N                 int
+	Quality           string
+	Size              string
+	OutputFormat      string
+	OutputCompression int
+	ResponseFormat    string
+	ImageURL          string
+	ImageBytes        []byte
+	ImageFilename     string
 	// ImageContentType 仅用于 multipart 文件头；为空时按 image/png 兜底。
 	ImageContentType string
 }

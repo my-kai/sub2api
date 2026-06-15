@@ -1,6 +1,7 @@
 package imagequeue
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"regexp"
@@ -125,8 +126,18 @@ func TestServiceConfigHidesChatGPT2APIAuthKey(t *testing.T) {
 		FourK:                  "0.40000",
 		BaseURL:                "http://127.0.0.1:8000",
 		AuthKey:                "secret-key",
-		UpdatedByUserID:        int64Ptr(9),
-		UpdatedAt:              updatedAt,
+		Channels: []UpstreamChannel{{
+			ID:         "chatgpt2api",
+			Name:       "chatgpt2api",
+			Type:       UpstreamChannelTypeChatGPT2API,
+			Enabled:    true,
+			Priority:   100,
+			BaseURL:    "http://127.0.0.1:8000",
+			AuthKey:    "secret-key",
+			RetryCount: 10,
+		}},
+		UpdatedByUserID: int64Ptr(9),
+		UpdatedAt:       updatedAt,
 	})
 
 	cfg, err := service.Config(t.Context())
@@ -138,6 +149,9 @@ func TestServiceConfigHidesChatGPT2APIAuthKey(t *testing.T) {
 	}
 	if !cfg.ChatGPT2API.AuthKeyConfigured {
 		t.Fatalf("AuthKeyConfigured should be true")
+	}
+	if len(cfg.UpstreamChannels) != 1 || !cfg.UpstreamChannels[0].AuthKeyConfigured || cfg.UpstreamChannels[0].AuthKey != "" {
+		t.Fatalf("sanitized upstream channels = %+v", cfg.UpstreamChannels)
 	}
 	body, err := json.Marshal(cfg)
 	if err != nil {
@@ -174,12 +188,22 @@ func TestServiceUpdateConfigKeepsOrClearsChatGPT2APIAuthKey(t *testing.T) {
 		FourK:                  "0.40000",
 		BaseURL:                "http://old.local/v1",
 		AuthKey:                "old-secret",
-		UpdatedByUserID:        int64Ptr(9),
-		UpdatedAt:              time.Date(2026, 6, 14, 10, 0, 0, 0, time.UTC),
+		Channels: []UpstreamChannel{{
+			ID:         "chatgpt2api",
+			Name:       "chatgpt2api",
+			Type:       UpstreamChannelTypeChatGPT2API,
+			Enabled:    true,
+			Priority:   100,
+			BaseURL:    "http://old.local/v1",
+			AuthKey:    "old-secret",
+			RetryCount: 10,
+		}},
+		UpdatedByUserID: int64Ptr(9),
+		UpdatedAt:       time.Date(2026, 6, 14, 10, 0, 0, 0, time.UTC),
 	}
 	expectGetConfig(mock, current)
 	mock.ExpectExec(`INSERT INTO image_generation_config`).
-		WithArgs(true, 3, 2, 9, "0.11100", "0.22200", "0.33300", "http://new.local/v1", "old-secret", int64(10), service.now().UTC()).
+		WithArgs(true, 3, 2, 9, "0.11100", "0.22200", "0.33300", "http://new.local/v1", "old-secret", sqlmock.AnyArg(), int64(10), service.now().UTC()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	cfg, err := service.UpdateConfig(t.Context(), ConfigInput{
@@ -187,7 +211,15 @@ func TestServiceUpdateConfigKeepsOrClearsChatGPT2APIAuthKey(t *testing.T) {
 		DefaultUserConcurrency: 2,
 		RetentionDays:          9,
 		UnitPrices:             UnitPriceInput{OneK: "0.111", TwoK: "0.222", FourK: "0.333"},
-		ChatGPT2API:            UpstreamConfigInput{BaseURL: "http://new.local/v1"},
+		UpstreamChannels: []UpstreamChannelInput{{
+			ID:         "chatgpt2api",
+			Name:       "chatgpt2api",
+			Type:       UpstreamChannelTypeChatGPT2API,
+			Enabled:    boolPtr(true),
+			Priority:   intPtr(100),
+			BaseURL:    "http://new.local/v1",
+			RetryCount: 10,
+		}},
 	}, runtime.UserProfile{ID: 10})
 	if err != nil {
 		t.Fatalf("UpdateConfig() keep error = %v", err)
@@ -198,7 +230,7 @@ func TestServiceUpdateConfigKeepsOrClearsChatGPT2APIAuthKey(t *testing.T) {
 
 	expectGetConfig(mock, current)
 	mock.ExpectExec(`INSERT INTO image_generation_config`).
-		WithArgs(true, 3, 2, 9, "0.11100", "0.22200", "0.33300", "http://new.local/v1", "", int64(10), service.now().UTC()).
+		WithArgs(true, 3, 2, 9, "0.11100", "0.22200", "0.33300", "http://new.local/v1", "", sqlmock.AnyArg(), int64(10), service.now().UTC()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	cfg, err = service.UpdateConfig(t.Context(), ConfigInput{
@@ -206,7 +238,16 @@ func TestServiceUpdateConfigKeepsOrClearsChatGPT2APIAuthKey(t *testing.T) {
 		DefaultUserConcurrency: 2,
 		RetentionDays:          9,
 		UnitPrices:             UnitPriceInput{OneK: "0.111", TwoK: "0.222", FourK: "0.333"},
-		ChatGPT2API:            UpstreamConfigInput{BaseURL: "http://new.local/v1", ClearAuthKey: true},
+		UpstreamChannels: []UpstreamChannelInput{{
+			ID:           "chatgpt2api",
+			Name:         "chatgpt2api",
+			Type:         UpstreamChannelTypeChatGPT2API,
+			Enabled:      boolPtr(true),
+			Priority:     intPtr(100),
+			BaseURL:      "http://new.local/v1",
+			ClearAuthKey: true,
+			RetryCount:   10,
+		}},
 	}, runtime.UserProfile{ID: 10})
 	if err != nil {
 		t.Fatalf("UpdateConfig() clear error = %v", err)
@@ -243,10 +284,20 @@ func TestServiceUpdateConfigCanDisableImageGeneration(t *testing.T) {
 		FourK:                  "0.40000",
 		BaseURL:                "http://old.local/v1",
 		AuthKey:                "old-secret",
-		UpdatedAt:              time.Date(2026, 6, 14, 10, 0, 0, 0, time.UTC),
+		Channels: []UpstreamChannel{{
+			ID:         "chatgpt2api",
+			Name:       "chatgpt2api",
+			Type:       UpstreamChannelTypeChatGPT2API,
+			Enabled:    true,
+			Priority:   100,
+			BaseURL:    "http://old.local/v1",
+			AuthKey:    "old-secret",
+			RetryCount: 10,
+		}},
+		UpdatedAt: time.Date(2026, 6, 14, 10, 0, 0, 0, time.UTC),
 	})
 	mock.ExpectExec(`INSERT INTO image_generation_config`).
-		WithArgs(false, 2, 1, 7, "0.13400", "0.26800", "0.40000", "http://old.local/v1", "old-secret", int64(10), service.now().UTC()).
+		WithArgs(false, 2, 1, 7, "0.13400", "0.26800", "0.40000", "http://old.local/v1", "old-secret", sqlmock.AnyArg(), int64(10), service.now().UTC()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	cfg, err := service.UpdateConfig(t.Context(), ConfigInput{
@@ -255,7 +306,7 @@ func TestServiceUpdateConfigCanDisableImageGeneration(t *testing.T) {
 		DefaultUserConcurrency: 1,
 		RetentionDays:          7,
 		UnitPrices:             UnitPriceInput{OneK: "0.134", TwoK: "0.268", FourK: "0.4"},
-		ChatGPT2API:            UpstreamConfigInput{BaseURL: "http://old.local/v1"},
+		UpstreamChannels:       []UpstreamChannelInput{},
 	}, runtime.UserProfile{ID: 10})
 	if err != nil {
 		t.Fatalf("UpdateConfig() error = %v", err)
@@ -289,7 +340,17 @@ func TestServiceChatGPT2APIRuntimeConfigUsesStoredConfig(t *testing.T) {
 		FourK:                  "0.40000",
 		BaseURL:                "http://127.0.0.1:8000/v1",
 		AuthKey:                "runtime-secret",
-		UpdatedAt:              time.Date(2026, 6, 14, 10, 0, 0, 0, time.UTC),
+		Channels: []UpstreamChannel{{
+			ID:         "chatgpt2api",
+			Name:       "chatgpt2api",
+			Type:       UpstreamChannelTypeChatGPT2API,
+			Enabled:    true,
+			Priority:   100,
+			BaseURL:    "http://127.0.0.1:8000/v1",
+			AuthKey:    "runtime-secret",
+			RetryCount: 10,
+		}},
+		UpdatedAt: time.Date(2026, 6, 14, 10, 0, 0, 0, time.UTC),
 	})
 
 	cfg, err := service.ChatGPT2APIRuntimeConfig(t.Context())
@@ -297,6 +358,64 @@ func TestServiceChatGPT2APIRuntimeConfigUsesStoredConfig(t *testing.T) {
 		t.Fatalf("ChatGPT2APIRuntimeConfig() error = %v", err)
 	}
 	if cfg.BaseURL.String() != "http://127.0.0.1:8000/v1" || cfg.AuthKey != "runtime-secret" {
+		t.Fatalf("runtime config = %+v", cfg)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("mock expectations: %v", err)
+	}
+}
+
+func TestServiceChatGPT2APIRuntimeConfigUsesLowestPriorityChatGPT2API(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+	store, err := NewStore(db, "")
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	service := NewService(store)
+
+	expectGetConfig(mock, configRow{
+		PlatformConcurrency:    2,
+		DefaultUserConcurrency: 1,
+		RetentionDays:          7,
+		OneK:                   "0.13400",
+		TwoK:                   "0.26800",
+		FourK:                  "0.40000",
+		BaseURL:                "http://legacy.local/v1",
+		AuthKey:                "legacy-secret",
+		Channels: []UpstreamChannel{
+			{
+				ID:         "chatgpt2api-slow",
+				Name:       "slow",
+				Type:       UpstreamChannelTypeChatGPT2API,
+				Enabled:    true,
+				Priority:   200,
+				BaseURL:    "http://slow.local/v1",
+				AuthKey:    "slow-secret",
+				RetryCount: 10,
+			},
+			{
+				ID:         "chatgpt2api-fast",
+				Name:       "fast",
+				Type:       UpstreamChannelTypeChatGPT2API,
+				Enabled:    true,
+				Priority:   10,
+				BaseURL:    "http://fast.local/v1",
+				AuthKey:    "fast-secret",
+				RetryCount: 10,
+			},
+		},
+		UpdatedAt: time.Date(2026, 6, 14, 10, 0, 0, 0, time.UTC),
+	})
+
+	cfg, err := service.ChatGPT2APIRuntimeConfig(t.Context())
+	if err != nil {
+		t.Fatalf("ChatGPT2APIRuntimeConfig() error = %v", err)
+	}
+	if cfg.BaseURL.String() != "http://fast.local/v1" || cfg.AuthKey != "fast-secret" {
 		t.Fatalf("runtime config = %+v", cfg)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -336,7 +455,7 @@ func TestServiceCreateTaskChargesBalanceAndCreatesHistory(t *testing.T) {
 		WithArgs(
 			int64(7), "demo", "demo@example.com", JobStatusQueued, int64(11), GenerationModeGenerate,
 			nil, nil, nil, nil,
-			nil, defaultImageModel, "draw a cat", 2, nil, nil, false,
+			nil, defaultImageModel, "draw a cat", 2, nil, nil, "png", nil, false,
 			"0.26800", ChargeStatusSuccess, sqlmock.AnyArg(), nil,
 			nil, nil, now.UTC(), nil, nil,
 		).
@@ -414,6 +533,249 @@ func TestServiceCreateTaskRejectsInsufficientBalance(t *testing.T) {
 	_, err = service.CreateTask(t.Context(), runtime.UserProfile{ID: 7}, CreateJobInput{SessionID: 11, Prompt: "draw", N: 1})
 	if !errors.Is(err, ErrInsufficientBalance) {
 		t.Fatalf("CreateTask() error = %v, want ErrInsufficientBalance", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("mock expectations: %v", err)
+	}
+}
+
+func TestServiceCreateAPIKeyReturnsPlaintextOnceAndStoresHash(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+	store, err := NewStore(db, "")
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	now := time.Date(2026, 6, 15, 10, 0, 0, 0, time.UTC)
+	service := NewService(store).WithNow(func() time.Time { return now })
+
+	mock.ExpectQuery(`INSERT INTO image_generation_api_keys`).
+		WithArgs(int64(7), "Codex", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), true, now.UTC()).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(21)))
+	mock.ExpectQuery(`SELECT id, user_id, name, key_prefix, key_suffix, enabled, last_used_at, created_at, deleted_at`).
+		WithArgs(int64(21), int64(7)).
+		WillReturnRows(apiKeyRows(APIKey{
+			ID:        21,
+			UserID:    7,
+			Name:      "Codex",
+			KeyPrefix: "sk-img-test-pref",
+			KeySuffix: "suffix",
+			Enabled:   true,
+			CreatedAt: now,
+		}))
+
+	key, err := service.CreateAPIKey(t.Context(), runtime.UserProfile{ID: 7}, CreateAPIKeyInput{Name: " Codex "})
+	if err != nil {
+		t.Fatalf("CreateAPIKey() error = %v", err)
+	}
+	if !strings.HasPrefix(key.PlaintextKey, apiKeyPrefix) {
+		t.Fatalf("plaintext key prefix = %q", key.PlaintextKey)
+	}
+	if key.MaskedKey != "sk-img-test-pref...suffix" {
+		t.Fatalf("masked key = %q", key.MaskedKey)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("mock expectations: %v", err)
+	}
+}
+
+func TestServiceUserForAPIKeyRejectsDeletedOrMissingKey(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+	store, err := NewStore(db, "")
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	service := NewService(store)
+
+	mock.ExpectQuery(`SELECT id, user_id, name, key_prefix, key_suffix, enabled, last_used_at, created_at, deleted_at`).
+		WithArgs(HashAPIKey("sk-img-missing")).
+		WillReturnError(sql.ErrNoRows)
+
+	if _, _, err := service.UserForAPIKey(t.Context(), "sk-img-missing"); !errors.Is(err, ErrAPIKeyNotFound) {
+		t.Fatalf("UserForAPIKey() error = %v, want ErrAPIKeyNotFound", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("mock expectations: %v", err)
+	}
+}
+
+func TestServiceUserForAPIKeyReturnsOwnerAndMarksUsed(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+	store, err := NewStore(db, "")
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	now := time.Date(2026, 6, 15, 10, 0, 0, 0, time.UTC)
+	service := NewService(store).WithNow(func() time.Time { return now })
+
+	mock.ExpectQuery(`SELECT id, user_id, name, key_prefix, key_suffix, enabled, last_used_at, created_at, deleted_at`).
+		WithArgs(HashAPIKey("sk-img-valid")).
+		WillReturnRows(apiKeyRows(APIKey{
+			ID:        31,
+			UserID:    7,
+			Name:      "Codex",
+			KeyPrefix: "sk-img-valid-pre",
+			KeySuffix: "suffix",
+			Enabled:   true,
+			CreatedAt: now,
+		}))
+	mock.ExpectExec(`UPDATE image_generation_api_keys\s+SET last_used_at = \$1`).
+		WithArgs(now.UTC(), int64(31)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	user, key, err := service.UserForAPIKey(t.Context(), "sk-img-valid")
+	if err != nil {
+		t.Fatalf("UserForAPIKey() error = %v", err)
+	}
+	if user.ID != 7 || key.ID != 31 {
+		t.Fatalf("user/key = %+v %+v", user, key)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("mock expectations: %v", err)
+	}
+}
+
+func TestServiceDeleteAPIKeySoftDeletesCurrentUserKey(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+	store, err := NewStore(db, "")
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	now := time.Date(2026, 6, 15, 10, 0, 0, 0, time.UTC)
+	service := NewService(store).WithNow(func() time.Time { return now })
+
+	mock.ExpectExec(`UPDATE image_generation_api_keys\s+SET deleted_at = \$1, enabled = FALSE`).
+		WithArgs(now.UTC(), int64(31), int64(7)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	if err := service.DeleteAPIKey(t.Context(), runtime.UserProfile{ID: 7}, 31); err != nil {
+		t.Fatalf("DeleteAPIKey() error = %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("mock expectations: %v", err)
+	}
+}
+
+func TestServiceDeleteAPIKeyReturnsNotFoundForDeletedKey(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+	store, err := NewStore(db, "")
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	now := time.Date(2026, 6, 15, 10, 0, 0, 0, time.UTC)
+	service := NewService(store).WithNow(func() time.Time { return now })
+
+	mock.ExpectExec(`UPDATE image_generation_api_keys\s+SET deleted_at = \$1, enabled = FALSE`).
+		WithArgs(now.UTC(), int64(31), int64(7)).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	if err := service.DeleteAPIKey(t.Context(), runtime.UserProfile{ID: 7}, 31); !errors.Is(err, ErrAPIKeyNotFound) {
+		t.Fatalf("DeleteAPIKey() error = %v, want ErrAPIKeyNotFound", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("mock expectations: %v", err)
+	}
+}
+
+func TestServiceCreateOpenAITaskCreatesSessionWhenMissing(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	defer db.Close()
+	store, err := NewStore(db, "")
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	now := time.Date(2026, 6, 15, 10, 0, 0, 0, time.UTC)
+	service := NewService(store).WithNow(func() time.Time { return now })
+	user := runtime.UserProfile{ID: 7, Username: "alice", Email: "alice@example.test"}
+
+	mock.ExpectQuery(`SELECT title FROM image_generation_sessions`).
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"title"}))
+	mock.ExpectQuery(`INSERT INTO image_generation_sessions`).
+		WithArgs(int64(7), "alice", "alice@example.test", "新会话 1", false, nil, nil, nil, now.UTC(), now.UTC()).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(11)))
+	expectGetConfig(mock, configRow{
+		PlatformConcurrency:    2,
+		DefaultUserConcurrency: 1,
+		RetentionDays:          7,
+		OneK:                   "0.13400",
+		TwoK:                   "0.26800",
+		FourK:                  "0.40000",
+		BaseURL:                "http://upstream.local",
+		AuthKey:                "secret",
+		UpdatedByUserID:        int64Ptr(1),
+		UpdatedAt:              now,
+	})
+	expectGetUserSession(mock, Session{ID: 11, UserID: 7, Title: "新会话 1", CreatedAt: now, UpdatedAt: now})
+	mock.ExpectBegin()
+	mock.ExpectExec(`UPDATE users\s+SET balance = balance - \$1::decimal`).
+		WithArgs("0.13400", int64(7)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`INSERT INTO image_generation_jobs`).
+		WithArgs(
+			int64(7), "alice", "alice@example.test", JobStatusQueued, int64(11), GenerationModeGenerate,
+			nil, nil, nil, nil, nil,
+			DefaultImageModel, "draw", 1, nil, nil, "png", nil, false,
+			"0.13400", ChargeStatusSuccess, sqlmock.AnyArg(), nil,
+			sqlmock.AnyArg(), nil, now.UTC(), nil, nil,
+		).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(21)))
+	mock.ExpectExec(`UPDATE image_generation_sessions`).
+		WithArgs(int64(21), now.UTC(), int64(11)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO redeem_codes`).
+		WithArgs(sqlmock.AnyArg(), imageGenerationRedeemType, "-0.13400", "used", int64(7), now.UTC(), imageGenerationChargeNote).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	expectGetJob(mock, Job{
+		ID:             21,
+		UserID:         7,
+		Username:       "alice",
+		Email:          "alice@example.test",
+		Status:         JobStatusQueued,
+		SessionID:      11,
+		GenerationMode: GenerationModeGenerate,
+		Model:          DefaultImageModel,
+		Prompt:         "draw",
+		N:              1,
+		OutputFormat:   "png",
+		ChargeAmount:   "0.13400",
+		ChargeStatus:   ChargeStatusSuccess,
+		CreatedAt:      now,
+	})
+	mock.ExpectExec(`UPDATE image_generation_sessions`).
+		WithArgs("draw", now.UTC(), int64(11), int64(7), int64(21)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	expectQueuePosition(mock, 21, now, 1)
+
+	job, err := service.CreateOpenAITask(t.Context(), user, CreateJobInput{Prompt: "draw"})
+	if err != nil {
+		t.Fatalf("CreateOpenAITask() error = %v", err)
+	}
+	if job.SessionID != 11 || job.ID != 21 {
+		t.Fatalf("job = %+v", job)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("mock expectations: %v", err)
@@ -498,6 +860,7 @@ type configRow struct {
 	FourK                  string
 	BaseURL                string
 	AuthKey                string
+	Channels               []UpstreamChannel
 	UpdatedByUserID        *int64
 	UpdatedAt              time.Time
 }
@@ -514,6 +877,7 @@ func expectGetConfig(mock sqlmock.Sqlmock, row configRow) {
 		"unit_price_high",
 		"chatgpt2api_base_url",
 		"chatgpt2api_auth_key",
+		"upstream_channels",
 		"updated_by_user_id",
 		"updated_at",
 	})
@@ -521,7 +885,11 @@ func expectGetConfig(mock sqlmock.Sqlmock, row configRow) {
 	if row.UpdatedByUserID != nil {
 		updatedBy = *row.UpdatedByUserID
 	}
-	rows.AddRow(enabled, row.PlatformConcurrency, row.DefaultUserConcurrency, row.RetentionDays, row.OneK, row.TwoK, row.FourK, row.BaseURL, row.AuthKey, updatedBy, row.UpdatedAt)
+	channels := row.Channels
+	if channels == nil {
+		channels = []UpstreamChannel{}
+	}
+	rows.AddRow(enabled, row.PlatformConcurrency, row.DefaultUserConcurrency, row.RetentionDays, row.OneK, row.TwoK, row.FourK, row.BaseURL, row.AuthKey, encodeUpstreamChannelsParam(channels), updatedBy, row.UpdatedAt)
 	mock.ExpectQuery(`SELECT enabled, platform_concurrency, default_user_concurrency, retention_days,`).
 		WillReturnRows(rows)
 }
@@ -538,13 +906,13 @@ func expectGetJob(mock sqlmock.Sqlmock, job Job) {
 	rows := sqlmock.NewRows([]string{
 		"id", "user_id", "username", "email", "status", "session_id", "generation_mode",
 		"source_image_task_id", "source_image_index", "source_image_bytes", "source_image_filename",
-		"source_image_content_type", "model", "prompt", "n", "quality", "size", "publish_to_gallery",
+		"source_image_content_type", "model", "prompt", "n", "quality", "size", "output_format", "output_compression", "publish_to_gallery",
 		"charge_amount", "charge_status", "balance_idempotency_key", "charge_message",
 		"result_json", "error_message", "created_at", "started_at", "finished_at",
 	}).AddRow(
 		job.ID, job.UserID, nullableString(job.Username), nullableString(job.Email), job.Status, nullableInt64(job.SessionID), job.GenerationMode,
 		nil, nil, nil, nil,
-		nil, job.Model, job.Prompt, job.N, nullableString(job.Quality), nullableString(job.Size), job.PublishToGallery,
+		nil, job.Model, job.Prompt, job.N, nullableString(job.Quality), nullableString(job.Size), nullableString(job.OutputFormat), nullableInt(job.OutputCompression), job.PublishToGallery,
 		job.ChargeAmount, job.ChargeStatus, nullableString(job.BalanceIdempotencyKey), nullableString(job.ChargeMessage),
 		nil, nullableString(job.ErrorMessage), job.CreatedAt, nullableTime(job.StartedAt), nullableTime(job.FinishedAt),
 	)
@@ -571,6 +939,15 @@ func expectQueuePosition(mock sqlmock.Sqlmock, jobID int64, createdAt time.Time,
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(position))
 }
 
+func apiKeyRows(key APIKey) *sqlmock.Rows {
+	return sqlmock.NewRows([]string{
+		"id", "user_id", "name", "key_prefix", "key_suffix", "enabled", "last_used_at", "created_at", "deleted_at",
+	}).AddRow(
+		key.ID, key.UserID, key.Name, key.KeyPrefix, nullableString(key.KeySuffix), key.Enabled,
+		nullableTime(key.LastUsedAt), key.CreatedAt, nullableTime(key.DeletedAt),
+	)
+}
+
 func nullLastTask(value int64) any {
 	if value == 0 {
 		return nil
@@ -592,6 +969,13 @@ func nullableInt64(value int64) any {
 	return value
 }
 
+func nullableInt(value *int) any {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
 func nullableTime(value *time.Time) any {
 	if value == nil {
 		return nil
@@ -600,5 +984,13 @@ func nullableTime(value *time.Time) any {
 }
 
 func int64Ptr(value int64) *int64 {
+	return &value
+}
+
+func intPtr(value int) *int {
+	return &value
+}
+
+func boolPtr(value bool) *bool {
 	return &value
 }

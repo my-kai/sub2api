@@ -123,6 +123,27 @@ func (c *Client) WithConfigLoader(loader ConfigLoader) *Client {
 	return c
 }
 
+// HTTPTimeout 返回当前上游调用超时，供 custom 渠道编排器复用同一运行时超时配置。
+//
+// 这里不暴露 http.Client 本身，避免外部包绕过 chatgpt2api 的鉴权、来源图下载和响应解析约束。
+func (c *Client) HTTPTimeout() time.Duration {
+	if c == nil || c.httpClient == nil {
+		return 0
+	}
+	return c.httpClient.Timeout
+}
+
+// DownloadEditSourceImage 复用 chatgpt2api 客户端的来源图下载策略。
+//
+// 渠道编排器会在进入多渠道重试前先下载来源图；这样下载失败被归类为本地请求准备失败，
+// 不会错误触发渠道切换，同时仍保留 IMAGE_CLIENT_TIMEOUT 的长超时优化。
+func (c *Client) DownloadEditSourceImage(ctx context.Context, input ImageEditRequest) (ImageEditRequest, error) {
+	if c == nil {
+		return ImageEditRequest{}, fmt.Errorf("%w: source image downloader is not configured", ErrInvalidRequest)
+	}
+	return c.downloadEditSourceImage(ctx, input)
+}
+
 // NewRuntimeConfig 从管理员配置中的字符串构造可请求配置。
 func NewRuntimeConfig(rawBaseURL string, rawAuthKey string) (RuntimeConfig, error) {
 	trimmedBaseURL := strings.TrimSpace(rawBaseURL)

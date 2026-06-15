@@ -42,13 +42,13 @@ type GalleryPublisher interface {
 // Store 使用 Postgres 原子 UPDATE ... RETURNING claim 任务，可避免多个 worker 重复执行同一任务。
 // 如果未来扩成多实例长任务调度，仍建议补充租约或心跳，处理进程存活但 goroutine 卡死的场景。
 type Worker struct {
-	store       *Store
-	service     *Service
-	imageClient ImageClient
-	interval    time.Duration
-	claimBatch  int
-	logger      *log.Logger
-	gallery     GalleryPublisher
+	store         *Store
+	service       *Service
+	channelRunner *channelRunner
+	interval      time.Duration
+	claimBatch    int
+	logger        *log.Logger
+	gallery       GalleryPublisher
 
 	mu      sync.Mutex
 	running map[int64]struct{}
@@ -65,16 +65,38 @@ func NewWorker(store *Store, service *Service, imageClient ImageClient, opts Wor
 	if claimBatch <= 0 {
 		claimBatch = defaultClaimBatchSize
 	}
-	return &Worker{
-		store:       store,
-		service:     service,
-		imageClient: imageClient,
-		interval:    interval,
-		claimBatch:  claimBatch,
-		logger:      opts.Logger,
-		gallery:     opts.GalleryService,
-		running:     map[int64]struct{}{},
+	worker := &Worker{
+		store:      store,
+		service:    service,
+		interval:   interval,
+		claimBatch: claimBatch,
+		logger:     opts.Logger,
+		gallery:    opts.GalleryService,
+		running:    map[int64]struct{}{},
 	}
+	if chatGPT2APIClient, ok := imageClient.(*chatgpt2api.Client); ok {
+		worker.channelRunner = newChannelRunner(store, chatGPT2APIClient, worker)
+	} else if imageClient != nil {
+		// 测试和旧调用方可注入单渠道 fake；生产路径由 channelRunner 按 DB 配置创建渠道 client。
+		worker.channelRunner = &channelRunner{
+			loadConfig: func(context.Context) (Config, error) {
+				return Config{UpstreamChannels: []UpstreamChannel{{
+					ID:         string(UpstreamChannelTypeChatGPT2API),
+					Name:       "test",
+					Type:       UpstreamChannelTypeChatGPT2API,
+					Enabled:    true,
+					Priority:   defaultUpstreamChannelPriority(0),
+					RetryCount: maxImageQuotaRetries,
+				}}}, nil
+			},
+			clientFactory: func(UpstreamChannel) (ChannelClient, error) {
+				return imageClient, nil
+			},
+			sourceDownloader: nil,
+			logger:           worker,
+		}
+	}
+	return worker
 }
 
 // Run 周期性调度队列，直到 context 被取消。
@@ -104,7 +126,7 @@ func (w *Worker) Run(ctx context.Context) {
 
 // Tick 执行一次调度扫描，测试可直接调用它验证并发规则。
 func (w *Worker) Tick(ctx context.Context) {
-	if w == nil || w.imageClient == nil {
+	if w == nil || w.channelRunner == nil {
 		return
 	}
 
@@ -217,12 +239,14 @@ func (w *Worker) generateJobImages(ctx context.Context, job Job) (chatgpt2api.Im
 			batchSize = maxUpstreamImageBatchSize
 		}
 		request := chatgpt2api.ImageGenerationRequest{
-			Model:          job.Model,
-			Prompt:         job.Prompt,
-			N:              batchSize,
-			Quality:        job.Quality,
-			Size:           job.Size,
-			ResponseFormat: "url",
+			Model:             job.Model,
+			Prompt:            job.Prompt,
+			N:                 batchSize,
+			Quality:           job.Quality,
+			Size:              job.Size,
+			OutputFormat:      job.OutputFormat,
+			OutputCompression: intValue(job.OutputCompression),
+			ResponseFormat:    "url",
 		}
 		result, err := w.generateImageWithQuotaRetry(ctx, job, request)
 		if err != nil {
@@ -255,16 +279,18 @@ func (w *Worker) editJobImages(ctx context.Context, job Job) (chatgpt2api.ImageG
 			batchSize = maxUpstreamImageBatchSize
 		}
 		request := chatgpt2api.ImageEditRequest{
-			Model:            job.Model,
-			Prompt:           job.Prompt,
-			N:                batchSize,
-			Quality:          job.Quality,
-			Size:             job.Size,
-			ResponseFormat:   "url",
-			ImageURL:         sourceImageURL,
-			ImageBytes:       sourceImageBytes,
-			ImageFilename:    sourceImageFilename,
-			ImageContentType: sourceImageContentType,
+			Model:             job.Model,
+			Prompt:            job.Prompt,
+			N:                 batchSize,
+			Quality:           job.Quality,
+			Size:              job.Size,
+			OutputFormat:      job.OutputFormat,
+			OutputCompression: intValue(job.OutputCompression),
+			ResponseFormat:    "url",
+			ImageURL:          sourceImageURL,
+			ImageBytes:        sourceImageBytes,
+			ImageFilename:     sourceImageFilename,
+			ImageContentType:  sourceImageContentType,
 		}
 		result, err := w.editImageWithQuotaRetry(ctx, job, request)
 		if err != nil {
@@ -282,24 +308,24 @@ func (w *Worker) editJobImages(ctx context.Context, job Job) (chatgpt2api.ImageG
 	return merged, nil
 }
 
-// generateImageWithQuotaRetry 对 chatgpt2api 临时无生图额度做定向重试。
-//
-// 该错误通常来自上游账号池的瞬时选择结果，重试可能命中其他可用账号；其他错误不重试，
-// 避免把鉴权、参数或网络异常误放大为长时间占用队列。
+func intValue(value *int) int {
+	if value == nil {
+		return 0
+	}
+	return *value
+}
+
+// generateImageWithQuotaRetry 兼容旧测试名，实际已收敛为统一渠道重试/切换。
 func (w *Worker) generateImageWithQuotaRetry(ctx context.Context, job Job, request chatgpt2api.ImageGenerationRequest) (chatgpt2api.ImageGenerationResponse, error) {
-	return w.imageRequestWithQuotaRetry(ctx, job, "generate", func(ctx context.Context) (chatgpt2api.ImageGenerationResponse, error) {
-		return w.imageClient.GenerateImage(ctx, request)
-	})
+	return w.channelRunner.GenerateImage(ctx, job, request)
 }
 
-// editImageWithQuotaRetry 对图片编辑接口复用同一套上游额度重试规则。
+// editImageWithQuotaRetry 兼容旧测试名，实际已收敛为统一渠道重试/切换。
 func (w *Worker) editImageWithQuotaRetry(ctx context.Context, job Job, request chatgpt2api.ImageEditRequest) (chatgpt2api.ImageGenerationResponse, error) {
-	return w.imageRequestWithQuotaRetry(ctx, job, "edit", func(ctx context.Context) (chatgpt2api.ImageGenerationResponse, error) {
-		return w.imageClient.EditImage(ctx, request)
-	})
+	return w.channelRunner.EditImage(ctx, job, request)
 }
 
-// imageRequestWithQuotaRetry 只处理 no available image quota，最多额外重试 10 次。
+// imageRequestWithQuotaRetry 保留给旧单元测试和回归阅读；新执行路径使用 channelRunner.run。
 func (w *Worker) imageRequestWithQuotaRetry(ctx context.Context, job Job, operation string, call func(context.Context) (chatgpt2api.ImageGenerationResponse, error)) (chatgpt2api.ImageGenerationResponse, error) {
 	result, err := call(ctx)
 	if err == nil || !isNoAvailableImageQuotaError(err) {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"strings"
 	"testing"
@@ -30,17 +31,55 @@ func (c retryImageClient) EditImage(ctx context.Context, input chatgpt2api.Image
 	return c.edit(ctx, input)
 }
 
+type sourceDownloaderFunc func(context.Context, chatgpt2api.ImageEditRequest) (chatgpt2api.ImageEditRequest, error)
+
+func (fn sourceDownloaderFunc) DownloadEditSourceImage(ctx context.Context, input chatgpt2api.ImageEditRequest) (chatgpt2api.ImageEditRequest, error) {
+	return fn(ctx, input)
+}
+
+func testWorkerWithChannels(channels []UpstreamChannel, clients map[string]ChannelClient) *Worker {
+	return &Worker{channelRunner: &channelRunner{
+		loadConfig: func(context.Context) (Config, error) {
+			return Config{UpstreamChannels: channels}, nil
+		},
+		clientFactory: func(channel UpstreamChannel) (ChannelClient, error) {
+			client, ok := clients[channel.ID]
+			if !ok {
+				return nil, errors.New("test channel client is not configured")
+			}
+			return client, nil
+		},
+	}}
+}
+
+func testChannel(id string, channelType UpstreamChannelType, retryCount int) UpstreamChannel {
+	return UpstreamChannel{
+		ID:         id,
+		Name:       id,
+		Type:       channelType,
+		Enabled:    true,
+		Priority:   defaultUpstreamChannelPriority(0),
+		RetryCount: retryCount,
+	}
+}
+
+func testChannelWithPriority(id string, channelType UpstreamChannelType, retryCount int, priority int) UpstreamChannel {
+	channel := testChannel(id, channelType, retryCount)
+	channel.Priority = priority
+	return channel
+}
+
 // TestWorkerGenerateRetriesNoAvailableImageQuota 固化上游临时无额度时的文生图重试行为。
 func TestWorkerGenerateRetriesNoAvailableImageQuota(t *testing.T) {
 	restoreImageQuotaRetryDelay(t)
 	calls := 0
-	worker := &Worker{imageClient: retryImageClient{generate: func(context.Context, chatgpt2api.ImageGenerationRequest) (chatgpt2api.ImageGenerationResponse, error) {
+	worker := testWorkerWithChannels([]UpstreamChannel{testChannel("primary", UpstreamChannelTypeChatGPT2API, maxImageQuotaRetries)}, map[string]ChannelClient{"primary": retryImageClient{generate: func(context.Context, chatgpt2api.ImageGenerationRequest) (chatgpt2api.ImageGenerationResponse, error) {
 		calls++
 		if calls <= 2 {
 			return chatgpt2api.ImageGenerationResponse{}, &chatgpt2api.UpstreamError{StatusCode: 429, Message: "no available image quota"}
 		}
 		return chatgpt2api.ImageGenerationResponse{Data: []chatgpt2api.ImageGenerationData{{URL: "https://example.invalid/generated.png"}}}, nil
-	}}}
+	}}})
 
 	result, err := worker.generateJobImages(context.Background(), Job{ID: 1, UserID: 2, Prompt: "cat", N: 1})
 	if err != nil {
@@ -58,10 +97,10 @@ func TestWorkerGenerateRetriesNoAvailableImageQuota(t *testing.T) {
 func TestWorkerGenerateStopsAfterMaxImageQuotaRetries(t *testing.T) {
 	restoreImageQuotaRetryDelay(t)
 	calls := 0
-	worker := &Worker{imageClient: retryImageClient{generate: func(context.Context, chatgpt2api.ImageGenerationRequest) (chatgpt2api.ImageGenerationResponse, error) {
+	worker := testWorkerWithChannels([]UpstreamChannel{testChannel("primary", UpstreamChannelTypeChatGPT2API, maxImageQuotaRetries)}, map[string]ChannelClient{"primary": retryImageClient{generate: func(context.Context, chatgpt2api.ImageGenerationRequest) (chatgpt2api.ImageGenerationResponse, error) {
 		calls++
 		return chatgpt2api.ImageGenerationResponse{}, errors.New("no available image quota")
-	}}}
+	}}})
 
 	_, err := worker.generateJobImages(context.Background(), Job{ID: 1, UserID: 2, Prompt: "cat", N: 1})
 	if err == nil {
@@ -76,13 +115,13 @@ func TestWorkerGenerateStopsAfterMaxImageQuotaRetries(t *testing.T) {
 func TestWorkerEditRetriesNoAvailableImageQuota(t *testing.T) {
 	restoreImageQuotaRetryDelay(t)
 	calls := 0
-	worker := &Worker{imageClient: retryImageClient{edit: func(context.Context, chatgpt2api.ImageEditRequest) (chatgpt2api.ImageGenerationResponse, error) {
+	worker := testWorkerWithChannels([]UpstreamChannel{testChannel("primary", UpstreamChannelTypeChatGPT2API, maxImageQuotaRetries)}, map[string]ChannelClient{"primary": retryImageClient{edit: func(context.Context, chatgpt2api.ImageEditRequest) (chatgpt2api.ImageGenerationResponse, error) {
 		calls++
 		if calls == 1 {
 			return chatgpt2api.ImageGenerationResponse{}, errors.New("wrapped upstream: no available image quota")
 		}
 		return chatgpt2api.ImageGenerationResponse{Data: []chatgpt2api.ImageGenerationData{{URL: "https://example.invalid/edited.png"}}}, nil
-	}}}
+	}}})
 
 	result, err := worker.editJobImages(context.Background(), Job{
 		ID:                  3,
@@ -100,6 +139,132 @@ func TestWorkerEditRetriesNoAvailableImageQuota(t *testing.T) {
 	}
 	if len(result.Data) != 1 || result.Data[0].URL == "" {
 		t.Fatalf("editJobImages() result = %#v", result)
+	}
+}
+
+func TestWorkerGenerateSwitchesChannelsAfterRetryCount(t *testing.T) {
+	restoreImageQuotaRetryDelay(t)
+	primaryCalls := 0
+	secondaryCalls := 0
+	worker := testWorkerWithChannels([]UpstreamChannel{
+		testChannel("primary", UpstreamChannelTypeChatGPT2API, 1),
+		testChannel("secondary", UpstreamChannelTypeOpenAI, 0),
+	}, map[string]ChannelClient{
+		"primary": retryImageClient{generate: func(context.Context, chatgpt2api.ImageGenerationRequest) (chatgpt2api.ImageGenerationResponse, error) {
+			primaryCalls++
+			return chatgpt2api.ImageGenerationResponse{}, errors.New("temporary upstream failure")
+		}},
+		"secondary": retryImageClient{generate: func(context.Context, chatgpt2api.ImageGenerationRequest) (chatgpt2api.ImageGenerationResponse, error) {
+			secondaryCalls++
+			return chatgpt2api.ImageGenerationResponse{Data: []chatgpt2api.ImageGenerationData{{URL: "https://example.invalid/fallback.png"}}}, nil
+		}},
+	})
+
+	result, err := worker.generateJobImages(context.Background(), Job{ID: 10, UserID: 20, Prompt: "cat", N: 1})
+	if err != nil {
+		t.Fatalf("generateJobImages() error = %v", err)
+	}
+	if primaryCalls != 2 {
+		t.Fatalf("primary calls = %d, want 2", primaryCalls)
+	}
+	if secondaryCalls != 1 {
+		t.Fatalf("secondary calls = %d, want 1", secondaryCalls)
+	}
+	if got := result.Data[0].URL; got != "https://example.invalid/fallback.png" {
+		t.Fatalf("fallback URL = %q", got)
+	}
+}
+
+func TestWorkerGenerateUsesLowerPriorityChannelFirst(t *testing.T) {
+	restoreImageQuotaRetryDelay(t)
+	order := make([]string, 0, 2)
+	worker := testWorkerWithChannels([]UpstreamChannel{
+		testChannelWithPriority("fallback", UpstreamChannelTypeOpenAI, 0, 200),
+		testChannelWithPriority("primary", UpstreamChannelTypeChatGPT2API, 0, 10),
+	}, map[string]ChannelClient{
+		"fallback": retryImageClient{generate: func(context.Context, chatgpt2api.ImageGenerationRequest) (chatgpt2api.ImageGenerationResponse, error) {
+			order = append(order, "fallback")
+			return chatgpt2api.ImageGenerationResponse{}, errors.New("fallback should not run first")
+		}},
+		"primary": retryImageClient{generate: func(context.Context, chatgpt2api.ImageGenerationRequest) (chatgpt2api.ImageGenerationResponse, error) {
+			order = append(order, "primary")
+			return chatgpt2api.ImageGenerationResponse{Data: []chatgpt2api.ImageGenerationData{{URL: "https://example.invalid/primary.png"}}}, nil
+		}},
+	})
+
+	result, err := worker.generateJobImages(context.Background(), Job{ID: 10, UserID: 20, Prompt: "cat", N: 1})
+	if err != nil {
+		t.Fatalf("generateJobImages() error = %v", err)
+	}
+	if len(order) != 1 || order[0] != "primary" {
+		t.Fatalf("channel order = %v, want [primary]", order)
+	}
+	if got := result.Data[0].URL; got != "https://example.invalid/primary.png" {
+		t.Fatalf("primary URL = %q", got)
+	}
+}
+
+func TestWorkerGenerateReturnsAllChannelsFailureSummary(t *testing.T) {
+	restoreImageQuotaRetryDelay(t)
+	worker := testWorkerWithChannels([]UpstreamChannel{
+		testChannel("primary", UpstreamChannelTypeChatGPT2API, 0),
+		testChannel("secondary", UpstreamChannelTypeOpenAI, 0),
+	}, map[string]ChannelClient{
+		"primary": retryImageClient{generate: func(context.Context, chatgpt2api.ImageGenerationRequest) (chatgpt2api.ImageGenerationResponse, error) {
+			return chatgpt2api.ImageGenerationResponse{}, errors.New("primary failed auth-key secret")
+		}},
+		"secondary": retryImageClient{generate: func(context.Context, chatgpt2api.ImageGenerationRequest) (chatgpt2api.ImageGenerationResponse, error) {
+			return chatgpt2api.ImageGenerationResponse{}, errors.New("secondary failed")
+		}},
+	})
+
+	_, err := worker.generateJobImages(context.Background(), Job{ID: 10, UserID: 20, Prompt: "cat", N: 1})
+	if err == nil {
+		t.Fatal("generateJobImages() expected error")
+	}
+	if !strings.Contains(err.Error(), "primary") || !strings.Contains(err.Error(), "secondary") {
+		t.Fatalf("all channels summary missing channel names: %v", err)
+	}
+	if strings.Contains(err.Error(), "secret") {
+		t.Fatalf("all channels summary leaked secret: %v", err)
+	}
+}
+
+func TestWorkerEditSourceDownloadFailureDoesNotSwitchChannel(t *testing.T) {
+	restoreImageQuotaRetryDelay(t)
+	calls := 0
+	runner := &channelRunner{
+		loadConfig: func(context.Context) (Config, error) {
+			return Config{UpstreamChannels: []UpstreamChannel{
+				testChannel("primary", UpstreamChannelTypeChatGPT2API, 1),
+				testChannel("secondary", UpstreamChannelTypeOpenAI, 0),
+			}}, nil
+		},
+		clientFactory: func(UpstreamChannel) (ChannelClient, error) {
+			return retryImageClient{edit: func(context.Context, chatgpt2api.ImageEditRequest) (chatgpt2api.ImageGenerationResponse, error) {
+				calls++
+				return chatgpt2api.ImageGenerationResponse{Data: []chatgpt2api.ImageGenerationData{{URL: "https://example.invalid/edited.png"}}}, nil
+			}}, nil
+		},
+		sourceDownloader: sourceDownloaderFunc(func(context.Context, chatgpt2api.ImageEditRequest) (chatgpt2api.ImageEditRequest, error) {
+			return chatgpt2api.ImageEditRequest{}, fmt.Errorf("%w: source image download failed", chatgpt2api.ErrInvalidRequest)
+		}),
+	}
+	worker := &Worker{channelRunner: runner}
+
+	_, err := worker.editImageWithQuotaRetry(context.Background(), Job{ID: 1, UserID: 2}, chatgpt2api.ImageEditRequest{
+		Prompt:   "edit",
+		N:        1,
+		ImageURL: "https://example.invalid/source.png",
+	})
+	if err == nil {
+		t.Fatal("editImageWithQuotaRetry() expected source download error")
+	}
+	if calls != 0 {
+		t.Fatalf("channel calls = %d, want 0", calls)
+	}
+	if !errors.Is(err, chatgpt2api.ErrInvalidRequest) {
+		t.Fatalf("error should keep invalid request sentinel: %v", err)
 	}
 }
 

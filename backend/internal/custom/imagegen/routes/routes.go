@@ -33,6 +33,9 @@ func RegisterUserRoutes(group gin.IRouter, h *handler.ImageGenerationHandler) {
 	group.GET("/custom/images/status", h.PublicStatus)
 	group.GET("/custom/images/models", h.Models)
 	group.GET("/custom/images/price-quote", h.PriceQuote)
+	group.GET("/custom/images/keys", h.APIKeys)
+	group.POST("/custom/images/keys", h.CreateAPIKey)
+	group.DELETE("/custom/images/keys/:id", h.DeleteAPIKey)
 	group.POST("/custom/images/sessions", h.CreateSession)
 	group.GET("/custom/images/sessions", h.Sessions)
 	group.PATCH("/custom/images/sessions/:id", h.UpdateSession)
@@ -50,12 +53,17 @@ func RegisterUserRoutes(group gin.IRouter, h *handler.ImageGenerationHandler) {
 	group.POST("/custom/images/tasks/:id/cancel", h.CancelTask)
 }
 
-// RegisterPublicGalleryRoute 注册公共图库列表接口。
+// RegisterPublicGalleryRoute 注册不依赖登录态的 custom 生图接口。
+//
+// 该函数由主仓未鉴权 v1 分组调用；OpenAI 兼容接口必须放在这里，
+// 避免经过 JWT 中间件后把 image key 调用误判成登录 token 失效。
 func RegisterPublicGalleryRoute(group gin.IRouter, h *handler.ImageGenerationHandler) {
 	if group == nil || h == nil {
 		return
 	}
 	group.GET("/custom/gallery/images", h.PublicGallery)
+	group.POST("/custom/openai/v1/images/generations", h.OpenAIImageGenerations)
+	group.POST("/custom/openai/v1/images/edits", h.OpenAIImageEdits)
 }
 
 // RegisterAdminRoutes 注册 custom 生图管理员接口。

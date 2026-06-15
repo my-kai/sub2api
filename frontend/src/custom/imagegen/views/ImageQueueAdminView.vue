@@ -40,32 +40,14 @@
             </div>
           </div>
 
-          <div class="rounded-2xl border border-gray-200 p-4 dark:border-dark-700">
-            <h3 class="text-sm font-semibold text-gray-900 dark:text-white">chatgpt2api 上游配置</h3>
-            <div class="mt-4 grid gap-4 md:grid-cols-2">
-              <label class="space-y-1 text-sm">
-                <span class="text-gray-600 dark:text-gray-300">Base URL</span>
-                <input v-model.trim="configForm.chatgpt2api_base_url" type="url" class="input" placeholder="http://127.0.0.1:8000" />
-              </label>
-              <label class="space-y-1 text-sm">
-                <span class="text-gray-600 dark:text-gray-300">Auth Key</span>
-                <input
-                  v-model.trim="configForm.chatgpt2api_auth_key"
-                  type="password"
-                  class="input"
-                  autocomplete="new-password"
-                  :placeholder="configForm.chatgpt2api_auth_key_configured ? '已配置，留空保持不变' : '请输入 auth-key'"
-                />
-              </label>
-            </div>
-            <label
-              v-if="configForm.chatgpt2api_auth_key_configured"
-              class="mt-3 inline-flex items-center gap-2 rounded-xl bg-gray-50 px-3 py-2 text-sm text-gray-700 dark:bg-dark-800 dark:text-gray-300"
-            >
-              <input v-model="configForm.chatgpt2api_clear_auth_key" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500" />
-              <span>保存时清除已配置 Auth Key</span>
-            </label>
-          </div>
+          <ImageUpstreamChannelList
+            :channels="configForm.upstream_channels"
+            :saving="savingConfig"
+            @add-channel="addUpstreamChannel"
+            @move-channel="moveUpstreamChannel"
+            @remove-channel="removeUpstreamChannel"
+            @update-channel="updateUpstreamChannel"
+          />
 
           <div class="grid gap-4 md:grid-cols-3">
             <label class="space-y-1 text-sm">
@@ -236,10 +218,12 @@
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
 import Toggle from '@/components/common/Toggle.vue'
+import ImageUpstreamChannelList from '../components/ImageUpstreamChannelList.vue'
 import { useImageQueueAdmin } from '../composables/useImageQueueAdmin'
 
 // 页面只做表单和表格布局；配置保存、用户搜索等状态集中在 custom composable。
 const {
+  addUpstreamChannel,
   closeLimitForm,
   configForm,
   deletingUserId,
@@ -256,13 +240,16 @@ const {
   limits,
   loadAdminImages,
   loading,
+  moveUpstreamChannel,
   openCreateLimitForm,
   openEditLimitForm,
+  removeUpstreamChannel,
   savingConfig,
   savingLimit,
   scheduleUserSearch,
   selectUserOption,
   selectedUserLabel,
+  updateUpstreamChannel,
   userOptions,
   userQuery,
   userSearchLoading,
