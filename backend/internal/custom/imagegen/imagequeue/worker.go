@@ -12,6 +12,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/custom/imagegen/chatgpt2api"
 	"github.com/Wei-Shaw/sub2api/internal/custom/imagegen/gallery"
+	"github.com/Wei-Shaw/sub2api/internal/custom/imagegen/openaiimage"
 )
 
 const (
@@ -502,19 +503,20 @@ func (w *Worker) logFailedJob(job Job, err error, persistedMessage string) {
 	)
 }
 
-// workerErrorMessage 生成写入任务记录的短错误摘要，避免把完整上游响应或密钥形态落库。
+// workerErrorMessage 生成写入任务记录的短错误摘要，避免把完整上游响应、渠道标识或密钥形态落库。
+//
+// 这里的错误会通过任务详情、SSE 快照和 OpenAI 兼容接口返回给前端，因此所有上游调用失败都只能落业务
+// 语义文案；具体渠道、渠道名称和上游原始错误保留在 worker 日志里排查。
 func workerErrorMessage(err error) string {
 	switch {
-	case errors.Is(err, chatgpt2api.ErrNotConfigured):
-		return "chatgpt2api image service is not configured"
 	case errors.Is(err, chatgpt2api.ErrInvalidRequest):
 		return err.Error()
-	case errors.Is(err, chatgpt2api.ErrUnauthorized):
-		return "chatgpt2api auth key is invalid or unauthorized"
+	case isPublicImageUpstreamFailure(err):
+		return "生图任务执行失败，请稍后重试"
 	default:
 		message := strings.TrimSpace(err.Error())
 		if message == "" {
-			return "image generation failed"
+			return "生图任务执行失败"
 		}
 		message = sanitizeWorkerLogText(message)
 		if len(message) > 500 {
@@ -522,6 +524,28 @@ func workerErrorMessage(err error) string {
 		}
 		return message
 	}
+}
+
+// isPublicImageUpstreamFailure 判断错误是否来自生图上游链路。
+//
+// 这些错误通常包含渠道类型、渠道名称、鉴权状态、HTTP 状态或供应商原始文案，不能直接作为用户可见
+// `error_message` 持久化；日志仍会记录脱敏后的原始错误，方便管理员排查真实原因。
+func isPublicImageUpstreamFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	var chatGPT2APIUpstreamErr *chatgpt2api.UpstreamError
+	var openAIUpstreamErr *openaiimage.UpstreamError
+	var allChannelsErr *allChannelsFailedError
+	return errors.Is(err, chatgpt2api.ErrNotConfigured) ||
+		errors.Is(err, chatgpt2api.ErrUnauthorized) ||
+		errors.Is(err, chatgpt2api.ErrBadResponse) ||
+		errors.Is(err, openaiimage.ErrNotConfigured) ||
+		errors.Is(err, openaiimage.ErrUnauthorized) ||
+		errors.Is(err, openaiimage.ErrBadResponse) ||
+		errors.As(err, &chatGPT2APIUpstreamErr) ||
+		errors.As(err, &openAIUpstreamErr) ||
+		errors.As(err, &allChannelsErr)
 }
 
 // sanitizeWorkerErrorForLog 保留排障所需错误文本，同时统一移除常见鉴权字段和值。

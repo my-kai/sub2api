@@ -165,7 +165,7 @@
     <BaseDialog
       :show="showEditDialog"
       :title="isEditing ? t('admin.announcements.editAnnouncement') : t('admin.announcements.createAnnouncement')"
-      width="wide"
+      width="extra-wide"
       @close="closeEdit"
     >
       <form id="announcement-form" @submit.prevent="handleSave" class="space-y-4">
@@ -176,7 +176,12 @@
 
         <div>
           <label class="input-label">{{ t('admin.announcements.form.content') }}</label>
-          <textarea v-model="form.content" rows="6" class="input" required></textarea>
+          <MarkdownPasteImageEditor
+            v-model="form.content"
+            :placeholder="t('admin.announcements.form.contentPlaceholder')"
+            required
+            @uploading-change="announcementImageUploading = $event"
+          />
         </div>
 
         <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -215,8 +220,8 @@
           <button type="button" @click="closeEdit" class="btn btn-secondary">
             {{ t('common.cancel') }}
           </button>
-          <button type="submit" form="announcement-form" :disabled="saving" class="btn btn-primary">
-            {{ saving ? t('common.saving') : t('common.save') }}
+          <button type="submit" form="announcement-form" :disabled="saving || announcementImageUploading" class="btn btn-primary">
+            {{ announcementImageUploading ? t('admin.announcements.form.imageUploading') : (saving ? t('common.saving') : t('common.save')) }}
           </button>
         </div>
       </template>
@@ -265,6 +270,7 @@ import Icon from '@/components/icons/Icon.vue'
 
 import AnnouncementTargetingEditor from '@/components/admin/announcements/AnnouncementTargetingEditor.vue'
 import AnnouncementReadStatusDialog from '@/components/admin/announcements/AnnouncementReadStatusDialog.vue'
+import MarkdownPasteImageEditor from '@/custom/announcements/components/MarkdownPasteImageEditor.vue'
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -409,6 +415,7 @@ function handleSearch() {
 // ===== Create/Edit dialog =====
 const showEditDialog = ref(false)
 const saving = ref(false)
+const announcementImageUploading = ref(false)
 const editingAnnouncement = ref<Announcement | null>(null)
 
 const isEditing = computed(() => !!editingAnnouncement.value)
@@ -436,6 +443,7 @@ async function loadSubscriptionGroups() {
 }
 
 function resetForm() {
+  announcementImageUploading.value = false
   form.title = ''
   form.content = ''
   form.status = 'draft'
@@ -472,6 +480,7 @@ function openEditDialog(row: Announcement) {
 
 function closeEdit() {
   showEditDialog.value = false
+  announcementImageUploading.value = false
   editingAnnouncement.value = null
 }
 
@@ -521,6 +530,10 @@ function buildUpdatePayload(original: Announcement) {
 }
 
 async function handleSave() {
+  if (announcementImageUploading.value) {
+    return
+  }
+
   // Frontend validation for targeting (to avoid ANNOUNCEMENT_INVALID_TARGET)
   const anyOf = form.targeting?.any_of ?? []
   if (anyOf.length > 50) {

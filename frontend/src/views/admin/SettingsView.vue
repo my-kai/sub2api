@@ -1465,6 +1465,68 @@
                 </p>
               </div>
 
+              <div class="border-t border-gray-100 pt-4 dark:border-dark-700">
+                <label class="font-medium text-gray-900 dark:text-white">
+                  {{ localText("登录回跳域名白名单", "Login callback domain allowlist") }}
+                </label>
+                <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                  {{
+                    localText(
+                      "仅允许这些域名使用登录回跳。",
+                      "Only these domains can use login callback redirects.",
+                    )
+                  }}
+                </p>
+                <div
+                  class="mt-3 rounded-lg border border-gray-300 bg-white p-2 dark:border-dark-500 dark:bg-dark-700"
+                >
+                  <div class="flex flex-wrap items-center gap-2">
+                    <span
+                      v-for="domain in callbackAuthAllowedDomainTags"
+                      :key="domain"
+                      class="inline-flex items-center gap-1 rounded bg-gray-100 px-2 py-1 text-xs font-mono text-gray-700 dark:bg-dark-600 dark:text-gray-200"
+                    >
+                      <span>{{ domain }}</span>
+                      <button
+                        type="button"
+                        class="rounded-full text-gray-500 hover:bg-gray-200 hover:text-gray-700 dark:text-gray-300 dark:hover:bg-dark-500 dark:hover:text-white"
+                        @click="removeCallbackAuthAllowedDomainTag(domain)"
+                      >
+                        <Icon
+                          name="x"
+                          size="xs"
+                          class="h-3.5 w-3.5"
+                          :stroke-width="2"
+                        />
+                      </button>
+                    </span>
+
+                    <div
+                      class="flex min-w-[220px] flex-1 items-center gap-1 rounded border border-transparent px-2 py-1 focus-within:border-primary-300 dark:focus-within:border-primary-700"
+                    >
+                      <input
+                        v-model="callbackAuthAllowedDomainDraft"
+                        type="text"
+                        class="w-full bg-transparent text-sm font-mono text-gray-900 outline-none placeholder:text-gray-400 dark:text-white dark:placeholder:text-gray-500"
+                        :placeholder="localText('example.com 或 *.example.com', 'example.com or *.example.com')"
+                        @input="handleCallbackAuthAllowedDomainDraftInput"
+                        @keydown="handleCallbackAuthAllowedDomainDraftKeydown"
+                        @blur="commitCallbackAuthAllowedDomainDraft"
+                        @paste="handleCallbackAuthAllowedDomainPaste"
+                      />
+                    </div>
+                  </div>
+                </div>
+                <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                  {{
+                    localText(
+                      "支持粘贴多个域名；*.example.com 仅匹配子域名。",
+                      "Paste multiple domains; *.example.com matches subdomains only.",
+                    )
+                  }}
+                </p>
+              </div>
+
               <!-- Promo Code -->
               <div
                 class="flex items-center justify-between border-t border-gray-100 pt-4 dark:border-dark-700"
@@ -4907,14 +4969,23 @@
                     >
                       {{ t("admin.settings.customMenu.visibility") }}
                     </label>
-                    <select v-model="item.visibility" class="input text-sm">
-                      <option value="user">
-                        {{ t("admin.settings.customMenu.visibilityUser") }}
-                      </option>
-                      <option value="admin">
-                        {{ t("admin.settings.customMenu.visibilityAdmin") }}
-                      </option>
-                    </select>
+                    <Select
+                      v-model="item.visibility"
+                      :options="customMenuVisibilityOptions"
+                    />
+                  </div>
+
+                  <!-- Open mode -->
+                  <div>
+                    <label
+                      class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400"
+                    >
+                      {{ t("admin.settings.customMenu.openMode") }}
+                    </label>
+                    <Select
+                      v-model="item.open_mode"
+                      :options="customMenuOpenModeOptions"
+                    />
                   </div>
 
                   <!-- URL (full width) -->
@@ -6746,6 +6817,12 @@ import { useAppStore } from "@/stores";
 import { useAdminSettingsStore } from "@/stores/adminSettings";
 import { normalizeVisibleMethod } from "@/components/payment/paymentFlow";
 import {
+  isCallbackAuthDomainValid,
+  normalizeCallbackAuthDomain,
+  normalizeCallbackAuthDomains,
+  parseCallbackAuthDomainInput,
+} from "@/utils/callbackAuthPolicy";
+import {
   isRegistrationEmailSuffixDomainValid,
   normalizeRegistrationEmailSuffixDomain,
   normalizeRegistrationEmailSuffixDomains,
@@ -6857,6 +6934,8 @@ const smtpPasswordManuallyEdited = ref(false);
 const testEmailAddress = ref("");
 const registrationEmailSuffixWhitelistTags = ref<string[]>([]);
 const registrationEmailSuffixWhitelistDraft = ref("");
+const callbackAuthAllowedDomainTags = ref<string[]>([]);
+const callbackAuthAllowedDomainDraft = ref("");
 const tablePageSizeOptionsInput = ref("10, 20, 50, 100");
 
 // Admin API Key 状态
@@ -7015,6 +7094,7 @@ const form = reactive<SettingsForm>({
   registration_enabled: true,
   email_verify_enabled: false,
   registration_email_suffix_whitelist: [],
+  callback_auth_allowed_domains: [],
   promo_code_enabled: true,
   invitation_code_enabled: false,
   password_reset_enabled: false,
@@ -7073,6 +7153,7 @@ const form = reactive<SettingsForm>({
     icon_svg: string;
     url: string;
     visibility: "user" | "admin";
+    open_mode: "iframe" | "new_tab";
     sort_order: number;
   }>,
   custom_endpoints: [] as Array<{
@@ -7544,6 +7625,79 @@ function handleRegistrationEmailSuffixWhitelistPaste(event: ClipboardEvent) {
   }
 }
 
+const callbackAuthAllowedDomainSeparatorKeys = new Set([
+  " ",
+  ",",
+  "，",
+  "Enter",
+  "Tab",
+]);
+
+function removeCallbackAuthAllowedDomainTag(domain: string) {
+  callbackAuthAllowedDomainTags.value =
+    callbackAuthAllowedDomainTags.value.filter((item) => item !== domain);
+}
+
+function addCallbackAuthAllowedDomainTag(raw: string) {
+  const domain = normalizeCallbackAuthDomain(raw);
+  if (
+    !isCallbackAuthDomainValid(domain) ||
+    callbackAuthAllowedDomainTags.value.includes(domain)
+  ) {
+    return;
+  }
+  callbackAuthAllowedDomainTags.value = [
+    ...callbackAuthAllowedDomainTags.value,
+    domain,
+  ];
+}
+
+function commitCallbackAuthAllowedDomainDraft() {
+  if (!callbackAuthAllowedDomainDraft.value) {
+    return;
+  }
+  addCallbackAuthAllowedDomainTag(callbackAuthAllowedDomainDraft.value);
+  callbackAuthAllowedDomainDraft.value = "";
+}
+
+function handleCallbackAuthAllowedDomainDraftInput() {
+  callbackAuthAllowedDomainDraft.value = normalizeCallbackAuthDomain(
+    callbackAuthAllowedDomainDraft.value,
+  );
+}
+
+function handleCallbackAuthAllowedDomainDraftKeydown(event: KeyboardEvent) {
+  if (event.isComposing) {
+    return;
+  }
+
+  if (callbackAuthAllowedDomainSeparatorKeys.has(event.key)) {
+    event.preventDefault();
+    commitCallbackAuthAllowedDomainDraft();
+    return;
+  }
+
+  if (
+    event.key === "Backspace" &&
+    !callbackAuthAllowedDomainDraft.value &&
+    callbackAuthAllowedDomainTags.value.length > 0
+  ) {
+    callbackAuthAllowedDomainTags.value.pop();
+  }
+}
+
+function handleCallbackAuthAllowedDomainPaste(event: ClipboardEvent) {
+  const text = event.clipboardData?.getData("text") || "";
+  if (!text.trim()) {
+    return;
+  }
+  event.preventDefault();
+  const tokens = parseCallbackAuthDomainInput(text);
+  for (const token of tokens) {
+    addCallbackAuthAllowedDomainTag(token);
+  }
+}
+
 // Quota notify email helpers
 const addQuotaNotifyEmail = () => {
   if (!form.account_quota_notify_emails) {
@@ -7580,6 +7734,46 @@ async function setAndCopyLinuxdoRedirectUrl() {
 }
 
 type EmailOAuthProvider = "github" | "google";
+
+function normalizeCustomMenuOpenMode(
+  value: unknown,
+): "iframe" | "new_tab" {
+  // 旧菜单没有打开方式字段，统一回退到 iframe，避免加载设置后下拉为空。
+  return value === "new_tab" ? "new_tab" : "iframe";
+}
+
+function normalizeCustomMenuItems(
+  items: typeof form.custom_menu_items,
+): typeof form.custom_menu_items {
+  return Array.isArray(items)
+    ? items.map((item) => ({
+        ...item,
+        open_mode: normalizeCustomMenuOpenMode(item.open_mode),
+      }))
+    : [];
+}
+
+const customMenuVisibilityOptions = computed(() => [
+  {
+    value: "user",
+    label: t("admin.settings.customMenu.visibilityUser"),
+  },
+  {
+    value: "admin",
+    label: t("admin.settings.customMenu.visibilityAdmin"),
+  },
+]);
+
+const customMenuOpenModeOptions = computed(() => [
+  {
+    value: "iframe",
+    label: t("admin.settings.customMenu.openModeIframe"),
+  },
+  {
+    value: "new_tab",
+    label: t("admin.settings.customMenu.openModeNewTab"),
+  },
+]);
 
 const githubOAuthRedirectUrlSuggestion = computed(() => {
   if (typeof window === "undefined") return "";
@@ -7708,6 +7902,7 @@ function addMenuItem() {
     icon_svg: "",
     url: "",
     visibility: "user",
+    open_mode: "iframe",
     sort_order: form.custom_menu_items.length,
   });
 }
@@ -7823,6 +8018,7 @@ async function loadSettings() {
         (form as Record<string, unknown>)[key] = value;
       }
     }
+    form.custom_menu_items = normalizeCustomMenuItems(form.custom_menu_items);
     form.login_agreement_mode =
       settings.login_agreement_mode === "checkbox" ? "checkbox" : "modal";
     form.login_agreement_updated_at =
@@ -7846,12 +8042,16 @@ async function loadSettings() {
       normalizeRegistrationEmailSuffixDomains(
         settings.registration_email_suffix_whitelist,
       );
+    callbackAuthAllowedDomainTags.value = normalizeCallbackAuthDomains(
+      settings.callback_auth_allowed_domains,
+    );
     tablePageSizeOptionsInput.value = formatTablePageSizeOptions(
       Array.isArray(settings.table_page_size_options)
         ? settings.table_page_size_options
         : [10, 20, 50, 100],
     );
     registrationEmailSuffixWhitelistDraft.value = "";
+    callbackAuthAllowedDomainDraft.value = "";
     form.smtp_password = "";
     smtpPasswordManuallyEdited.value = false;
     form.turnstile_secret_key = "";
@@ -8160,6 +8360,7 @@ async function saveSettings() {
         registrationEmailSuffixWhitelistTags.value.map((suffix) =>
           suffix.startsWith("*.") ? suffix : `@${suffix}`,
         ),
+      callback_auth_allowed_domains: callbackAuthAllowedDomainTags.value,
       promo_code_enabled: form.promo_code_enabled,
       invitation_code_enabled: form.invitation_code_enabled,
       password_reset_enabled: form.password_reset_enabled,
@@ -8409,12 +8610,16 @@ async function saveSettings() {
       normalizeRegistrationEmailSuffixDomains(
         updated.registration_email_suffix_whitelist,
       );
+    callbackAuthAllowedDomainTags.value = normalizeCallbackAuthDomains(
+      updated.callback_auth_allowed_domains,
+    );
     tablePageSizeOptionsInput.value = formatTablePageSizeOptions(
       Array.isArray(updated.table_page_size_options)
         ? updated.table_page_size_options
         : [10, 20, 50, 100],
     );
     registrationEmailSuffixWhitelistDraft.value = "";
+    callbackAuthAllowedDomainDraft.value = "";
     form.smtp_password = "";
     smtpPasswordManuallyEdited.value = false;
     form.turnstile_secret_key = "";

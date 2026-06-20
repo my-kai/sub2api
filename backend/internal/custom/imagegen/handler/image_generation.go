@@ -263,6 +263,7 @@ func (h *ImageGenerationHandler) SessionTasks(c *gin.Context) {
 	if result.Items == nil {
 		result.Items = []imagequeue.Job{}
 	}
+	sanitizePublicImageJobs(result.Items)
 	c.JSON(http.StatusOK, result)
 }
 
@@ -308,6 +309,7 @@ func (h *ImageGenerationHandler) SessionTaskEvents(c *gin.Context) {
 		if result.Items == nil {
 			result.Items = []imagequeue.Job{}
 		}
+		sanitizePublicImageJobs(result.Items)
 		encoded, err := json.Marshal(result)
 		if err != nil {
 			h.writeSSE(c, "snapshot_error", gin.H{"message": "任务读取失败"})
@@ -866,6 +868,7 @@ func (h *ImageGenerationHandler) userLimitSnapshot(ctx context.Context, userID i
 }
 
 func (h *ImageGenerationHandler) taskResponse(job imagequeue.Job) gin.H {
+	sanitizePublicImageJob(&job)
 	return gin.H{
 		"task":    job,
 		"balance": currentBalance(),
@@ -946,18 +949,14 @@ func (h *ImageGenerationHandler) optionalUser(c *gin.Context) (runtime.UserProfi
 
 func writeImageGenerationError(c *gin.Context, err error) {
 	switch {
-	case errors.Is(err, chatgpt2api.ErrNotConfigured):
-		c.JSON(http.StatusServiceUnavailable, gin.H{"message": "chatgpt2api image service is not configured"})
 	case errors.Is(err, chatgpt2api.ErrInvalidRequest):
 		c.JSON(http.StatusBadRequest, gin.H{"message": err.Error()})
-	case errors.Is(err, chatgpt2api.ErrUnauthorized):
-		c.JSON(http.StatusBadGateway, gin.H{"message": "chatgpt2api auth key is invalid or unauthorized"})
-	case isChatGPT2APIUpstreamError(err):
+	case isChatGPT2APIUpstreamError(err) || errors.Is(err, chatgpt2api.ErrNotConfigured) || errors.Is(err, chatgpt2api.ErrUnauthorized):
 		log.Printf("[WARN] chatgpt2api image generation failed: reason=%q path=%q client_ip=%q", sanitizeErrorForLog(err), c.Request.URL.Path, c.ClientIP())
-		c.JSON(http.StatusBadGateway, gin.H{"message": "chatgpt2api image generation failed"})
+		c.JSON(http.StatusBadGateway, gin.H{"message": publicImageTaskFailureMessage})
 	default:
 		log.Printf("[WARN] image generation service failed: reason=%q path=%q client_ip=%q", sanitizeErrorForLog(err), c.Request.URL.Path, c.ClientIP())
-		c.JSON(http.StatusInternalServerError, gin.H{"message": "image generation service error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"message": "生图服务暂时不可用"})
 	}
 }
 

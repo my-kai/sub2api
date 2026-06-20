@@ -79,6 +79,7 @@ type Config struct {
 	Default                 DefaultConfig                 `mapstructure:"default"`
 	RateLimit               RateLimitConfig               `mapstructure:"rate_limit"`
 	Pricing                 PricingConfig                 `mapstructure:"pricing"`
+	ImageGen                ImageGenConfig                `mapstructure:"image_gen"`
 	Gateway                 GatewayConfig                 `mapstructure:"gateway"`
 	APIKeyAuth              APIKeyAuthCacheConfig         `mapstructure:"api_key_auth_cache"`
 	SubscriptionCache       SubscriptionCacheConfig       `mapstructure:"subscription_cache"`
@@ -544,6 +545,18 @@ type PricingConfig struct {
 	UpdateIntervalHours int `mapstructure:"update_interval_hours"`
 	// 哈希校验间隔（分钟）
 	HashCheckIntervalMinutes int `mapstructure:"hash_check_interval_minutes"`
+}
+
+// ImageGenConfig describes the handoff from sub2api-ex to the standalone image-gen service.
+// It only contains service-entry and code-exchange settings; generation channels and
+// image storage belong to the new image-gen service.
+type ImageGenConfig struct {
+	// BaseURL is the browser-facing image-gen base URL used to build /auth/callback links.
+	BaseURL string `mapstructure:"base_url"`
+	// ExchangeSecret is shared only by sub2api-ex and image-gen for one-time code exchange.
+	ExchangeSecret string `mapstructure:"exchange_secret"`
+	// CodeTTLSeconds bounds one-time login code validity; default is 300 seconds.
+	CodeTTLSeconds int `mapstructure:"code_ttl_seconds"`
 }
 
 type ServerConfig struct {
@@ -1448,6 +1461,8 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	cfg.OIDC.UsePKCEExplicit = hasExplicitConfigOrEnv("oidc_connect.use_pkce", "OIDC_CONNECT_USE_PKCE")
 	cfg.OIDC.ValidateIDTokenExplicit = hasExplicitConfigOrEnv("oidc_connect.validate_id_token", "OIDC_CONNECT_VALIDATE_ID_TOKEN")
 	cfg.Dashboard.KeyPrefix = strings.TrimSpace(cfg.Dashboard.KeyPrefix)
+	cfg.ImageGen.BaseURL = strings.TrimRight(strings.TrimSpace(cfg.ImageGen.BaseURL), "/")
+	cfg.ImageGen.ExchangeSecret = strings.TrimSpace(cfg.ImageGen.ExchangeSecret)
 	cfg.CORS.AllowedOrigins = normalizeStringSlice(cfg.CORS.AllowedOrigins)
 	cfg.Security.ResponseHeaders.AdditionalAllowed = normalizeStringSlice(cfg.Security.ResponseHeaders.AdditionalAllowed)
 	cfg.Security.ResponseHeaders.ForceRemove = normalizeStringSlice(cfg.Security.ResponseHeaders.ForceRemove)
@@ -1757,6 +1772,11 @@ func setDefaults() {
 	viper.SetDefault("pricing.update_interval_hours", 24)
 	viper.SetDefault("pricing.hash_check_interval_minutes", 10)
 
+	// ImageGen handoff - standalone image-gen service entry and exchange settings.
+	viper.SetDefault("image_gen.base_url", "")
+	viper.SetDefault("image_gen.exchange_secret", "")
+	viper.SetDefault("image_gen.code_ttl_seconds", 300)
+
 	// Timezone (default to Asia/Shanghai for Chinese users)
 	viper.SetDefault("timezone", "Asia/Shanghai")
 
@@ -2058,6 +2078,28 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("server.frontend_url invalid: must not include userinfo")
 		}
 		warnIfInsecureURL("server.frontend_url", c.Server.FrontendURL)
+	}
+	if strings.TrimSpace(c.ImageGen.BaseURL) != "" {
+		if err := ValidateAbsoluteHTTPURL(c.ImageGen.BaseURL); err != nil {
+			return fmt.Errorf("image_gen.base_url invalid: %w", err)
+		}
+		u, err := url.Parse(strings.TrimSpace(c.ImageGen.BaseURL))
+		if err != nil {
+			return fmt.Errorf("image_gen.base_url invalid: %w", err)
+		}
+		if u.RawQuery != "" || u.ForceQuery {
+			return fmt.Errorf("image_gen.base_url invalid: must not include query")
+		}
+		if u.User != nil {
+			return fmt.Errorf("image_gen.base_url invalid: must not include userinfo")
+		}
+		warnIfInsecureURL("image_gen.base_url", c.ImageGen.BaseURL)
+		if strings.TrimSpace(c.ImageGen.ExchangeSecret) == "" {
+			return fmt.Errorf("image_gen.exchange_secret is required when image_gen.base_url is configured")
+		}
+	}
+	if c.ImageGen.CodeTTLSeconds < 0 {
+		return fmt.Errorf("image_gen.code_ttl_seconds must be non-negative")
 	}
 	if c.JWT.ExpireHour <= 0 {
 		return fmt.Errorf("jwt.expire_hour must be positive")

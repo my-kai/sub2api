@@ -129,9 +129,14 @@ func TestOpenAIImageGenerationsReturnsFailedTaskAsOpenAIError(t *testing.T) {
 
 	handler.OpenAIImageGenerations(context)
 
-	assertOpenAIErrorCode(t, recorder, http.StatusBadGateway, "upstream_error")
-	if !strings.Contains(recorder.Body.String(), "upstream exploded") {
+	assertOpenAIErrorCode(t, recorder, http.StatusBadGateway, "image_generation_failed")
+	if !strings.Contains(recorder.Body.String(), "Image generation task failed. Please try again later.") {
 		t.Fatalf("body = %s", recorder.Body.String())
+	}
+	for _, leaked := range []string{"upstream exploded", "chatgpt2api", "auth key"} {
+		if strings.Contains(strings.ToLower(recorder.Body.String()), strings.ToLower(leaked)) {
+			t.Fatalf("body leaked upstream detail %q: %s", leaked, recorder.Body.String())
+		}
 	}
 }
 
@@ -210,6 +215,7 @@ type openAIQueueServiceStub struct {
 	waitID          int64
 	waitJob         imagequeue.Job
 	waitErr         error
+	taskJob         imagequeue.Job
 	cancelCalled    bool
 }
 
@@ -260,7 +266,7 @@ func (s *openAIQueueServiceStub) RetryTask(context.Context, runtime.UserProfile,
 }
 
 func (s *openAIQueueServiceStub) Task(context.Context, runtime.UserProfile, int64) (imagequeue.Job, error) {
-	return imagequeue.Job{}, errors.New("not implemented")
+	return s.taskJob, nil
 }
 
 func (s *openAIQueueServiceStub) CancelTask(context.Context, runtime.UserProfile, int64) (imagequeue.Job, error) {
@@ -330,4 +336,20 @@ func (s *openAIQueueServiceStub) UpsertUserLimit(context.Context, int64, imagequ
 
 func (s *openAIQueueServiceStub) DeleteUserLimit(context.Context, int64) error {
 	return errors.New("not implemented")
+}
+
+type staticUserResolver struct {
+	user runtime.UserProfile
+}
+
+func (r staticUserResolver) RequireUser(*gin.Context) (runtime.UserProfile, error) {
+	return r.user, nil
+}
+
+func (r staticUserResolver) RequireAdmin(*gin.Context) (runtime.UserProfile, error) {
+	return r.user, nil
+}
+
+func (r staticUserResolver) OptionalUser(*gin.Context) (runtime.UserProfile, bool) {
+	return r.user, r.user.ID > 0
 }

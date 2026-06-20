@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/custom/imagegen/chatgpt2api"
+	"github.com/Wei-Shaw/sub2api/internal/custom/imagegen/openaiimage"
 )
 
 type retryImageClient struct {
@@ -328,8 +329,33 @@ func TestWorkerErrorMessageRedactsDefaultErrorSummary(t *testing.T) {
 	}
 }
 
-func TestWorkerErrorMessageKeepsStableAuthFailureSummary(t *testing.T) {
-	if got := workerErrorMessage(chatgpt2api.ErrUnauthorized); got != "chatgpt2api auth key is invalid or unauthorized" {
-		t.Fatalf("workerErrorMessage() = %q", got)
+func TestWorkerErrorMessageHidesUpstreamChannelDetails(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{name: "chatgpt2api auth", err: chatgpt2api.ErrUnauthorized},
+		{name: "chatgpt2api upstream", err: &chatgpt2api.UpstreamError{StatusCode: 502, Message: "chatgpt2api upstream exploded"}},
+		{name: "openai auth", err: openaiimage.ErrUnauthorized},
+		{name: "openai upstream", err: &openaiimage.UpstreamError{StatusCode: 500, Message: "openai upstream exploded"}},
+		{name: "all channels", err: &allChannelsFailedError{attempts: []channelAttemptError{{
+			channel: testChannel("primary-chatgpt2api", UpstreamChannelTypeChatGPT2API, 0),
+			attempt: 1,
+			total:   1,
+			err:     errors.New("chatgpt2api failed"),
+		}}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			message := workerErrorMessage(tc.err)
+			for _, leaked := range []string{"chatgpt2api", "openai", "upstream", "auth", "primary-chatgpt2api"} {
+				if strings.Contains(strings.ToLower(message), leaked) {
+					t.Fatalf("workerErrorMessage leaked %q: %q", leaked, message)
+				}
+			}
+			if message != "生图任务执行失败，请稍后重试" {
+				t.Fatalf("workerErrorMessage() = %q", message)
+			}
+		})
 	}
 }

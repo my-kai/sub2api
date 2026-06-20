@@ -2,11 +2,15 @@ package handler
 
 import (
 	"bytes"
+	"encoding/json"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/custom/imagegen/imagequeue"
+	"github.com/Wei-Shaw/sub2api/internal/custom/imagegen/runtime"
 	"github.com/gin-gonic/gin"
 )
 
@@ -93,6 +97,49 @@ func TestReadMultipartCreateTaskInputAcceptsImageFile(t *testing.T) {
 	}
 	if input.SourceImageFilename != "source.png" {
 		t.Fatalf("source image filename = %q", input.SourceImageFilename)
+	}
+}
+
+// TestTaskSanitizesHistoricalUpstreamErrorMessage 覆盖旧任务失败原因的最后出口兜底。
+//
+// worker 新失败任务会直接写通用文案，但历史数据可能已经保存上游渠道名；任务详情返回前必须再过滤。
+func TestTaskSanitizesHistoricalUpstreamErrorMessage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service := &openAIQueueServiceStub{
+		taskJob: imagequeue.Job{
+			ID:           21,
+			UserID:       7,
+			Status:       imagequeue.JobStatusFailed,
+			ErrorMessage: "chatgpt2api upstream auth key rejected",
+		},
+	}
+	handler := &ImageGenerationHandler{
+		userResolver: staticUserResolver{user: runtime.UserProfile{ID: 7}},
+		queueService: service,
+	}
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodGet, "/custom/images/tasks/21", nil)
+	context.Params = gin.Params{{Key: "id", Value: "21"}}
+
+	handler.Task(context)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
+	}
+	var payload struct {
+		Task imagequeue.Job `json:"task"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Task.ErrorMessage != "生图任务执行失败，请稍后重试" {
+		t.Fatalf("error_message = %q", payload.Task.ErrorMessage)
+	}
+	for _, leaked := range []string{"chatgpt2api", "upstream", "auth key"} {
+		if strings.Contains(strings.ToLower(recorder.Body.String()), leaked) {
+			t.Fatalf("task response leaked %q: %s", leaked, recorder.Body.String())
+		}
 	}
 }
 

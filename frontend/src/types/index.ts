@@ -171,6 +171,8 @@ export interface CustomMenuItem {
   url: string
   page_slug?: string
   visibility: 'user' | 'admin'
+  /** 打开方式；旧配置没有该字段时按 iframe 兼容。 */
+  open_mode?: 'iframe' | 'new_tab'
   sort_order: number
 }
 

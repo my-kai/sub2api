@@ -1622,6 +1622,14 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 		normalizedWhitelist = []string{}
 	}
 	settings.RegistrationEmailSuffixWhitelist = normalizedWhitelist
+	normalizedCallbackDomains, err := NormalizeCallbackAuthAllowedDomains(settings.CallbackAuthAllowedDomains)
+	if err != nil {
+		return nil, infraerrors.BadRequest("INVALID_CALLBACK_AUTH_ALLOWED_DOMAINS", err.Error())
+	}
+	if normalizedCallbackDomains == nil {
+		normalizedCallbackDomains = []string{}
+	}
+	settings.CallbackAuthAllowedDomains = normalizedCallbackDomains
 	alipaySource, err := normalizeVisibleMethodSettingSource("alipay", settings.PaymentVisibleMethodAlipaySource, settings.PaymentVisibleMethodAlipayEnabled)
 	if err != nil {
 		return nil, err
@@ -1673,6 +1681,11 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 		return nil, fmt.Errorf("marshal registration email suffix whitelist: %w", err)
 	}
 	updates[SettingKeyRegistrationEmailSuffixWhitelist] = string(registrationEmailSuffixWhitelistJSON)
+	callbackAuthAllowedDomainsJSON, err := json.Marshal(settings.CallbackAuthAllowedDomains)
+	if err != nil {
+		return nil, fmt.Errorf("marshal callback auth allowed domains: %w", err)
+	}
+	updates[SettingKeyCallbackAuthAllowedDomains] = string(callbackAuthAllowedDomainsJSON)
 	updates[SettingKeyPromoCodeEnabled] = strconv.FormatBool(settings.PromoCodeEnabled)
 	updates[SettingKeyPasswordResetEnabled] = strconv.FormatBool(settings.PasswordResetEnabled)
 	updates[SettingKeyFrontendURL] = settings.FrontendURL
@@ -2361,6 +2374,18 @@ func (s *SettingService) GetRegistrationEmailSuffixWhitelist(ctx context.Context
 	return ParseRegistrationEmailSuffixWhitelist(value)
 }
 
+// GetCallbackAuthAllowedDomains returns normalized callback handoff domain allowlist.
+//
+// Empty or unreadable settings fail closed: callback authorization endpoints will
+// reject callback URLs until an admin explicitly configures allowed domains.
+func (s *SettingService) GetCallbackAuthAllowedDomains(ctx context.Context) []string {
+	value, err := s.settingRepo.GetValue(ctx, SettingKeyCallbackAuthAllowedDomains)
+	if err != nil {
+		return []string{}
+	}
+	return ParseCallbackAuthAllowedDomains(value)
+}
+
 // IsPromoCodeEnabled 检查是否启用优惠码功能
 func (s *SettingService) IsPromoCodeEnabled(ctx context.Context) bool {
 	value, err := s.settingRepo.GetValue(ctx, SettingKeyPromoCodeEnabled)
@@ -2682,6 +2707,7 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyRegistrationEnabled:                       "true",
 		SettingKeyEmailVerifyEnabled:                        "false",
 		SettingKeyRegistrationEmailSuffixWhitelist:          "[]",
+		SettingKeyCallbackAuthAllowedDomains:                "[]",
 		SettingKeyPromoCodeEnabled:                          "true", // 默认启用优惠码功能
 		SettingKeyLoginAgreementEnabled:                     "false",
 		SettingKeyLoginAgreementMode:                        defaultLoginAgreementMode,
@@ -2859,6 +2885,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 		RegistrationEnabled:              settings[SettingKeyRegistrationEnabled] == "true",
 		EmailVerifyEnabled:               emailVerifyEnabled,
 		RegistrationEmailSuffixWhitelist: ParseRegistrationEmailSuffixWhitelist(settings[SettingKeyRegistrationEmailSuffixWhitelist]),
+		CallbackAuthAllowedDomains:       ParseCallbackAuthAllowedDomains(settings[SettingKeyCallbackAuthAllowedDomains]),
 		PromoCodeEnabled:                 settings[SettingKeyPromoCodeEnabled] != "false", // 默认启用
 		PasswordResetEnabled:             emailVerifyEnabled && settings[SettingKeyPasswordResetEnabled] == "true",
 		FrontendURL:                      settings[SettingKeyFrontendURL],

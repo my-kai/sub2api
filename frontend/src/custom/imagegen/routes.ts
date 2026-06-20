@@ -35,7 +35,7 @@ export const customImagegenRoutes: CustomImagegenRouteItem[] = [
     name: 'CustomImageGallery',
     label: '公共图库',
     title: '公共图库',
-    requiresAuth: false,
+    requiresAuth: true,
   },
   {
     path: '/admin/custom/images',

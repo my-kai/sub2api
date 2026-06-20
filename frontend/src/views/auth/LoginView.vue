@@ -464,6 +464,23 @@ function validateForm(): boolean {
 
 // ==================== Form Handlers ====================
 
+async function redirectAfterLogin(): Promise<void> {
+  const currentQuery = router.currentRoute.value.query
+  const callback = typeof currentQuery.callback === 'string' ? currentQuery.callback : ''
+  if (callback) {
+    // External callbacks must go through the explicit authorization page before
+    // a one-time code is issued to the callback URL.
+    await router.push({
+      path: '/auth/callback-authorize',
+      query: { callback },
+    })
+    return
+  }
+
+  const redirectTo = (currentQuery.redirect as string) || '/dashboard'
+  await router.push(redirectTo)
+}
+
 async function handleLogin(): Promise<void> {
   // Clear previous error
   errorMessage.value = ''
@@ -497,9 +514,7 @@ async function handleLogin(): Promise<void> {
     clearAllAffiliateReferralCodes()
     appStore.showSuccess(t('auth.loginSuccess'))
 
-    // Redirect to dashboard or intended route
-    const redirectTo = (router.currentRoute.value.query.redirect as string) || '/dashboard'
-    await router.push(redirectTo)
+    await redirectAfterLogin()
   } catch (error: unknown) {
     // Reset Turnstile on error
     if (turnstileRef.value) {
@@ -531,9 +546,7 @@ async function handle2FAVerify(code: string): Promise<void> {
     clearAllAffiliateReferralCodes()
     appStore.showSuccess(t('auth.loginSuccess'))
 
-    // Redirect to dashboard or intended route
-    const redirectTo = (router.currentRoute.value.query.redirect as string) || '/dashboard'
-    await router.push(redirectTo)
+    await redirectAfterLogin()
   } catch (error: unknown) {
     const err = error as { message?: string; response?: { data?: { message?: string } } }
     const message = err.response?.data?.message || err.message || t('profile.totp.loginFailed')

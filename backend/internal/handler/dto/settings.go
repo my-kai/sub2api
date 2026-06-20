@@ -14,7 +14,8 @@ type CustomMenuItem struct {
 	IconSVG    string `json:"icon_svg"`
 	URL        string `json:"url"`
 	PageSlug   string `json:"page_slug,omitempty"`
-	Visibility string `json:"visibility"` // "user" or "admin"
+	Visibility string `json:"visibility"`          // "user" or "admin"
+	OpenMode   string `json:"open_mode,omitempty"` // "iframe" or "new_tab"; empty keeps legacy iframe behavior.
 	SortOrder  int    `json:"sort_order"`
 }
 
@@ -30,6 +31,7 @@ type SystemSettings struct {
 	RegistrationEnabled              bool                     `json:"registration_enabled"`
 	EmailVerifyEnabled               bool                     `json:"email_verify_enabled"`
 	RegistrationEmailSuffixWhitelist []string                 `json:"registration_email_suffix_whitelist"`
+	CallbackAuthAllowedDomains       []string                 `json:"callback_auth_allowed_domains"`
 	PromoCodeEnabled                 bool                     `json:"promo_code_enabled"`
 	PasswordResetEnabled             bool                     `json:"password_reset_enabled"`
 	FrontendURL                      string                   `json:"frontend_url"`

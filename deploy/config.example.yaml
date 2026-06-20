@@ -145,6 +145,17 @@ security:
 # Gateway Configuration
 # 网关配置
 # =============================================================================
+image_gen:
+  # Standalone image-gen browser URL used by /custom/images handoff.
+  # 独立生图服务的浏览器访问地址，用于 /custom/images 登录态跳转。
+  base_url: ""
+  # Shared secret used only by sub2api-ex and image-gen backend code exchange.
+  # 仅 sub2api-ex 与 image-gen 后端 code exchange 使用的共享密钥。
+  exchange_secret: ""
+  # One-time login code TTL in seconds.
+  # 一次性登录 code 有效期（秒）。
+  code_ttl_seconds: 300
+
 gateway:
   # Timeout for waiting upstream response headers (seconds)
   # 等待上游响应头超时时间（秒）

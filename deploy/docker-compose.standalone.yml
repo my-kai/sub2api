@@ -38,6 +38,9 @@ services:
       - SERVER_PORT=8080
       - SERVER_MODE=${SERVER_MODE:-release}
       - RUN_MODE=${RUN_MODE:-standard}
+      - IMAGE_GEN_BASE_URL=${IMAGE_GEN_BASE_URL:-}
+      - IMAGE_GEN_EXCHANGE_SECRET=${IMAGE_GEN_EXCHANGE_SECRET:-}
+      - IMAGE_GEN_CODE_TTL_SECONDS=${IMAGE_GEN_CODE_TTL_SECONDS:-300}
 
       # =======================================================================
       # Database Configuration (PostgreSQL) - Required

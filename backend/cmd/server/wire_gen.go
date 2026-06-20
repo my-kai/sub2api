@@ -10,6 +10,8 @@ import (
 	"context"
 	"github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	customactivityruntime "github.com/Wei-Shaw/sub2api/internal/custom/activity/runtime"
+	customcallbackauth "github.com/Wei-Shaw/sub2api/internal/custom/callbackauth"
 	customimagegen "github.com/Wei-Shaw/sub2api/internal/custom/imagegen"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/handler/admin"
@@ -259,11 +261,19 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	jwtAuthMiddleware := middleware.NewJWTAuthMiddleware(authService, userService)
 	adminAuthMiddleware := middleware.NewAdminAuthMiddleware(authService, userService, settingService)
 	apiKeyAuthMiddleware := middleware.NewAPIKeyAuthMiddleware(apiKeyService, subscriptionService, configConfig)
+	activityBundle, err := customactivityruntime.ProvideBundleWithMainDeps(db, apiKeyAuthCacheInvalidator, billingCacheService)
+	if err != nil {
+		return nil, err
+	}
 	bundle, err := customimagegen.ProvideBundle(db, userService, adminService, billingCacheService)
 	if err != nil {
 		return nil, err
 	}
-	engine := server.ProvideRouter(configConfig, handlers, jwtAuthMiddleware, adminAuthMiddleware, apiKeyAuthMiddleware, apiKeyService, subscriptionService, opsService, settingService, redisClient, bundle)
+	callbackAuthBundle, err := customcallbackauth.ProvideBundle(db, userService, settingService)
+	if err != nil {
+		return nil, err
+	}
+	engine := server.ProvideRouter(configConfig, handlers, jwtAuthMiddleware, adminAuthMiddleware, apiKeyAuthMiddleware, apiKeyService, subscriptionService, opsService, settingService, userService, redisClient, activityBundle, bundle, callbackAuthBundle)
 	httpServer := server.ProvideHTTPServer(configConfig, engine)
 	opsMetricsCollector := service.ProvideOpsMetricsCollector(opsRepository, settingRepository, accountRepository, concurrencyService, db, redisClient, configConfig)
 	opsAggregationService := service.ProvideOpsAggregationService(opsRepository, settingRepository, db, redisClient, configConfig)

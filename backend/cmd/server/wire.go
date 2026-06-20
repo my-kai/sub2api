@@ -12,6 +12,8 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	customactivityruntime "github.com/Wei-Shaw/sub2api/internal/custom/activity/runtime"
+	customcallbackauth "github.com/Wei-Shaw/sub2api/internal/custom/callbackauth"
 	customimagegen "github.com/Wei-Shaw/sub2api/internal/custom/imagegen"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/payment"
@@ -40,6 +42,8 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 		payment.ProviderSet,
 		middleware.ProviderSet,
 		handler.ProviderSet,
+		customactivityruntime.ProvideBundleWithMainDeps,
+		customcallbackauth.ProvideBundle,
 		customimagegen.ProvideBundle,
 
 		// Server layer ProviderSet

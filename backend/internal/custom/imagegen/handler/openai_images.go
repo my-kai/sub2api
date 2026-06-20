@@ -142,12 +142,19 @@ func writeOpenAITerminalJob(c *gin.Context, job imagequeue.Job) {
 	case imagequeue.JobStatusCanceled:
 		writeOpenAIImageError(c, http.StatusConflict, "request_error", "task_canceled", "Image generation task was canceled.")
 	default:
-		message := strings.TrimSpace(job.ErrorMessage)
-		if message == "" {
-			message = "Image generation task failed."
-		}
-		writeOpenAIImageError(c, http.StatusBadGateway, "api_error", "upstream_error", message)
+		writeOpenAIImageError(c, http.StatusBadGateway, "api_error", "image_generation_failed", publicOpenAITerminalJobMessage(job))
 	}
+}
+
+// publicOpenAITerminalJobMessage 把内部任务失败原因映射为 OpenAI 兼容接口的稳定业务文案。
+//
+// 任务 `error_message` 可能来自旧数据或历史版本 worker，不能信任其已脱敏；兼容接口作为外部调用面，
+// 这里再兜底过滤一次，避免把渠道名称、鉴权状态或上游原始错误返回给调用方。
+func publicOpenAITerminalJobMessage(job imagequeue.Job) string {
+	if job.Status != imagequeue.JobStatusFailed {
+		return "Image generation task failed."
+	}
+	return "Image generation task failed. Please try again later."
 }
 
 func writeOpenAIQueueError(c *gin.Context, err error) {

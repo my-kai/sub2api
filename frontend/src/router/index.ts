@@ -11,6 +11,7 @@ import { useAdminComplianceStore } from '@/stores/adminCompliance'
 import { useNavigationLoadingState } from '@/composables/useNavigationLoading'
 import { useRoutePrefetch } from '@/composables/useRoutePrefetch'
 import { getSetupStatus } from '@/api/setup'
+import { customActivityRouteRecords, findCustomActivityRoute } from '@/custom/activity/routes'
 import { findCustomImagegenRoute } from '@/custom/imagegen/routes'
 import { findCustomModelMarketplaceRoute } from '@/custom/modelMarketplace/routes'
 import { resolveCompletedSetupRedirectPath } from './setupRedirect'
@@ -138,6 +139,15 @@ const routes: RouteRecordRaw[] = [
       requiresAuth: false,
       title: 'OIDC OAuth Callback',
       titleKey: 'auth.oidcCallbackPageTitle'
+    }
+  },
+  {
+    path: '/auth/callback-authorize',
+    name: 'CallbackAuthorize',
+    component: () => import('@/custom/callbackauth/views/CallbackAuthorizeView.vue'),
+    meta: {
+      requiresAuth: true,
+      title: 'Authorize Login'
     }
   },
   {
@@ -374,6 +384,9 @@ const routes: RouteRecordRaw[] = [
       requiresPayment: false
     }
   },
+  // ==================== Custom Activity Routes ====================
+  ...customActivityRouteRecords,
+
   {
     path: '/custom/:id',
     name: 'CustomPage',
@@ -390,7 +403,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/custom/images',
     name: 'CustomImageGeneration',
-    component: () => import('@/custom/imagegen/views/ImageGenerationView.vue'),
+    component: () => import('@/custom/imagegen/views/ImageGenRedirectView.vue'),
     meta: {
       requiresAuth: true,
       requiresAdmin: false,
@@ -401,7 +414,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/custom/images/history',
     name: 'CustomImageHistory',
-    component: () => import('@/custom/imagegen/views/ImageHistoryView.vue'),
+    component: () => import('@/custom/imagegen/views/ImageGenRedirectView.vue'),
     meta: {
       requiresAuth: true,
       requiresAdmin: false,
@@ -412,9 +425,9 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/custom/images/gallery',
     name: 'CustomImageGallery',
-    component: () => import('@/custom/imagegen/views/PublicGalleryView.vue'),
+    component: () => import('@/custom/imagegen/views/ImageGenRedirectView.vue'),
     meta: {
-      requiresAuth: false,
+      requiresAuth: true,
       requiresAdmin: false,
       title: 'Public Gallery',
       titleKey: 'nav.customImageGallery',
@@ -625,7 +638,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/admin/custom/images',
     name: 'AdminCustomImages',
-    component: () => import('@/custom/imagegen/views/ImageQueueAdminView.vue'),
+    component: () => import('@/custom/imagegen/views/ImageGenRedirectView.vue'),
     meta: {
       requiresAuth: true,
       requiresAdmin: true,
@@ -777,6 +790,10 @@ function isBackendModePublicRouteAllowed(path: string, hasPendingAuthSession: bo
   return false
 }
 
+function getSingleQueryString(value: unknown): string {
+  return typeof value === 'string' ? value : ''
+}
+
 router.beforeEach(async (to, _from, next) => {
   // 开始导航加载状态
   navigationLoading.startNavigation()
@@ -792,7 +809,7 @@ router.beforeEach(async (to, _from, next) => {
   // Set page title
   const appStore = useAppStore()
   // For custom pages, use menu item label as document title
-  if (typeof to.name === 'string' && (findCustomImagegenRoute(to.name) || findCustomModelMarketplaceRoute(to.name))) {
+  if (typeof to.name === 'string' && (findCustomActivityRoute(to.name) || findCustomImagegenRoute(to.name) || findCustomModelMarketplaceRoute(to.name))) {
     document.title = resolveDocumentTitle(to.meta.title, appStore.siteName, to.meta.titleKey as string)
   } else if (to.name === 'CustomPage') {
     const id = to.params.id as string
@@ -829,6 +846,19 @@ router.beforeEach(async (to, _from, next) => {
   // If route doesn't require auth, allow access
   if (!requiresAuth) {
     // If already authenticated and trying to access login/register, redirect to appropriate dashboard
+    if (authStore.isAuthenticated && to.path === '/login') {
+      const callback = getSingleQueryString(to.query.callback)
+      if (callback) {
+        // Backend mode intentionally keeps non-admin users on login; otherwise
+        // they would bounce between the callback authorization page and /login.
+        if (appStore.backendModeEnabled && !authStore.isAdmin) {
+          next()
+          return
+        }
+        next({ path: '/auth/callback-authorize', query: { callback } })
+        return
+      }
+    }
     if (authStore.isAuthenticated && (to.path === '/login' || to.path === '/register')) {
       // In backend mode, non-admin users should NOT be redirected away from login
       // (they are blocked from all protected routes, so redirecting would cause a loop)
@@ -854,6 +884,14 @@ router.beforeEach(async (to, _from, next) => {
 
   // Route requires authentication
   if (!authStore.isAuthenticated) {
+    if (to.path === '/auth/callback-authorize') {
+      const callback = getSingleQueryString(to.query.callback)
+      next({
+        path: '/login',
+        query: callback ? { callback } : { redirect: to.fullPath }
+      })
+      return
+    }
     // Not authenticated, redirect to login
     next({
       path: '/login',

@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	customactivityruntime "github.com/Wei-Shaw/sub2api/internal/custom/activity/runtime"
+	customcallbackauth "github.com/Wei-Shaw/sub2api/internal/custom/callbackauth"
 	customimagegen "github.com/Wei-Shaw/sub2api/internal/custom/imagegen"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/websearch"
@@ -38,8 +40,11 @@ func ProvideRouter(
 	subscriptionService *service.SubscriptionService,
 	opsService *service.OpsService,
 	settingService *service.SettingService,
+	userService *service.UserService,
 	redisClient *redis.Client,
+	customActivity *customactivityruntime.Bundle,
 	customImageGen *customimagegen.Bundle,
+	customCallbackAuth *customcallbackauth.Bundle,
 ) *gin.Engine {
 	if cfg.Server.Mode == "release" {
 		gin.SetMode(gin.ReleaseMode)
@@ -96,7 +101,7 @@ func ProvideRouter(
 		service.SetWebSearchManager(websearch.NewManager(configs, redisClient))
 	})
 
-	return SetupRouter(r, handlers, jwtAuth, adminAuth, apiKeyAuth, apiKeyService, subscriptionService, opsService, settingService, cfg, redisClient, customImageGen)
+	return SetupRouter(r, handlers, jwtAuth, adminAuth, apiKeyAuth, apiKeyService, subscriptionService, opsService, settingService, userService, cfg, redisClient, customActivity, customImageGen, customCallbackAuth)
 }
 
 // ProvideHTTPServer 提供 HTTP 服务器
