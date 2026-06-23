@@ -23,8 +23,8 @@ WORKDIR /app/frontend
 # 安装 pnpm 11，保持与本地生成 pnpm-lock.yaml 的主版本一致。
 RUN corepack enable && corepack prepare pnpm@11 --activate
 
-# Install dependencies first (better caching)
-COPY frontend/package.json frontend/pnpm-lock.yaml ./
+# 先复制依赖声明、锁文件和 pnpm 配置，保证安装层缓存稳定且读取 allowBuilds。
+COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 
 # Copy frontend source and the legal documents imported by public pages.
