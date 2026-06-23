@@ -162,6 +162,7 @@ import {
   sendVerifyCode,
 } from '@/api/auth'
 import { apiClient } from '@/api/client'
+import { resolveAuthReturnPath } from '@/custom/oauthapp/authReturn'
 import { buildAuthErrorMessage } from '@/utils/authError'
 import {
   formatRegistrationEmailSuffixWhitelistForMessage,
@@ -220,6 +221,7 @@ const pendingAuthToken = ref<string>('')
 const pendingAuthTokenField = ref<PendingAuthTokenField>('pending_auth_token')
 const pendingProvider = ref<string>('')
 const pendingRedirect = ref<string>('')
+const redirectAfterVerify = ref<string>('')
 const pendingAdoptionDecision = ref<{
   adoptDisplayName?: boolean
   adoptAvatar?: boolean
@@ -272,6 +274,7 @@ onMounted(async () => {
       pendingAuthTokenField.value = registerData.pending_auth_token_field || activePendingSession?.token_field || 'pending_auth_token'
       pendingProvider.value = registerData.pending_provider || activePendingSession?.provider || ''
       pendingRedirect.value = registerData.pending_redirect || activePendingSession?.redirect || ''
+      redirectAfterVerify.value = resolveAuthReturnPath(registerData.redirect, '')
       pendingAdoptionDecision.value = registerData.pending_adoption_decision
         ? {
             adoptDisplayName: registerData.pending_adoption_decision.adopt_display_name === true,
@@ -545,8 +548,8 @@ async function handleVerify(): Promise<void> {
     // Show success toast
     appStore.showSuccess(t('auth.accountCreatedSuccess', { siteName: siteName.value }))
 
-    // Redirect to dashboard
-    await router.push(pendingRedirect.value || '/dashboard')
+    // 普通邮箱注册也可能来自第三方 OAuth 授权页，验证码完成后继续原授权流程。
+    await router.push(pendingRedirect.value || redirectAfterVerify.value || '/dashboard')
   } catch (error: unknown) {
     errorMessage.value = buildAuthErrorMessage(error, {
       fallback: t('auth.verifyFailed')
@@ -562,8 +565,11 @@ function handleBack(): void {
   // Clear session data
   sessionStorage.removeItem('register_data')
 
-  // Go back to registration
-  router.push('/register')
+  // 返回注册页时保留安全 redirect，避免邮箱验证码页返回后丢失第三方授权上下文。
+  router.push({
+    path: '/register',
+    query: redirectAfterVerify.value ? { redirect: redirectAfterVerify.value } : {},
+  })
 }
 
 function buildEmailSuffixNotAllowedMessage(): string {

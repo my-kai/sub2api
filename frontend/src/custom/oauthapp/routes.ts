@@ -56,6 +56,16 @@ export const customOAuthAppRouteRecords: RouteRecordRaw[] = [
 ]
 
 /**
+ * 判断当前路径是否为第三方 OAuth 授权确认页。
+ *
+ * @param path - vue-router 解析后的站内路径
+ * @returns 命中自定义 OAuth 授权页时返回 true
+ */
+export function isCustomOAuthAuthorizeRoute(path: string): boolean {
+  return path === '/auth/oauth/authorize'
+}
+
+/**
  * 按路由名查找 custom OAuth 应用入口。
  */
 export function findCustomOAuthAppRoute(name: string): CustomOAuthAppRouteItem | undefined {

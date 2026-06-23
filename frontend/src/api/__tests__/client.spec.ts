@@ -229,6 +229,46 @@ describe('API Client', () => {
         writable: true,
       })
     })
+
+    it('授权页 401 跳登录时保留完整 authorize 地址', async () => {
+      localStorage.setItem('auth_token', 'expired-token')
+      const fullAuthorizePath =
+        '/auth/oauth/authorize?response_type=code&client_id=ak_test&redirect_uri=https%3A%2F%2Fapp.example.com%2Fcallback'
+
+      const originalLocation = window.location
+      Object.defineProperty(window, 'location', {
+        value: {
+          ...originalLocation,
+          pathname: '/auth/oauth/authorize',
+          search: '?response_type=code&client_id=ak_test&redirect_uri=https%3A%2F%2Fapp.example.com%2Fcallback',
+          hash: '',
+          href: fullAuthorizePath,
+        },
+        writable: true,
+      })
+
+      const adapter = vi.fn().mockRejectedValue({
+        response: {
+          status: 401,
+          data: { code: 'TOKEN_EXPIRED', message: 'Token expired' },
+        },
+        config: {
+          url: '/custom/oauth/authorize',
+          headers: { Authorization: 'Bearer expired-token' },
+        },
+        code: 'ERR_BAD_REQUEST',
+      })
+      apiClient.defaults.adapter = adapter
+
+      await expect(apiClient.get('/custom/oauth/authorize')).rejects.toBeDefined()
+
+      expect(window.location.href).toBe(`/login?redirect=${encodeURIComponent(fullAuthorizePath)}`)
+
+      Object.defineProperty(window, 'location', {
+        value: originalLocation,
+        writable: true,
+      })
+    })
   })
 
   // --- 网络错误 ---

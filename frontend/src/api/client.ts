@@ -10,6 +10,7 @@ import { getLocale } from '@/i18n'
 // ==================== Axios Instance Configuration ====================
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1'
+const CUSTOM_OAUTH_AUTHORIZE_PATH = '/auth/oauth/authorize'
 
 export const apiClient: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
@@ -26,6 +27,45 @@ export const apiClient: AxiosInstance = axios.create({
 let isRefreshing = false
 // Queue of requests waiting for token refresh
 let refreshSubscribers: Array<(token: string) => void> = []
+
+/**
+ * 获取当前浏览器内的完整站内路径。
+ *
+ * @returns 当前 pathname + search + hash；非浏览器环境返回空字符串
+ */
+function getCurrentBrowserPath(): string {
+  if (typeof window === 'undefined') return ''
+  const { pathname, search, hash } = window.location
+  return `${pathname}${search}${hash}`
+}
+
+/**
+ * 生成登录超时后的登录页地址。
+ *
+ * @returns 普通页面返回 /login；第三方 OAuth 授权页返回带 redirect 的登录地址
+ */
+function buildExpiredLoginURL(): string {
+  const currentPath = getCurrentBrowserPath()
+  // 授权页若已经进入但 token 过期，必须带回完整 authorize 参数；
+  // 否则用户重新登录后只能进控制台，第三方应用拿不到授权码。
+  if (currentPath.startsWith(CUSTOM_OAUTH_AUTHORIZE_PATH)) {
+    return `/login?redirect=${encodeURIComponent(currentPath)}`
+  }
+  return '/login'
+}
+
+/**
+ * 登录超时时跳转到登录页。
+ *
+ * @returns 已触发跳转时返回 true；当前已经在登录页时返回 false
+ */
+function redirectToExpiredLogin(): boolean {
+  if (typeof window === 'undefined' || window.location.pathname.includes('/login')) {
+    return false
+  }
+  window.location.href = buildExpiredLoginURL()
+  return true
+}
 
 /**
  * Subscribe to token refresh completion
@@ -248,9 +288,7 @@ apiClient.interceptors.response.use(
             localStorage.removeItem('token_expires_at')
             sessionStorage.setItem('auth_expired', '1')
 
-            if (!window.location.pathname.includes('/login')) {
-              window.location.href = '/login'
-            }
+            redirectToExpiredLogin()
 
             return Promise.reject({
               status: 401,
@@ -279,9 +317,7 @@ apiClient.interceptors.response.use(
           sessionStorage.setItem('auth_expired', '1')
         }
         // Only redirect if not already on login page
-        if (!window.location.pathname.includes('/login')) {
-          window.location.href = '/login'
-        }
+        redirectToExpiredLogin()
       }
 
       // Return structured error

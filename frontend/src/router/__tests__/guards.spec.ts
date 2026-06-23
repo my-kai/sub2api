@@ -58,12 +58,26 @@ interface MockAuthState {
 }
 
 /**
+ * 归一化认证完成后的站内回跳地址。
+ * 测试里复制生产守卫的安全判断，确保 OAuth authorize 原始参数只通过站内路径回放。
+ */
+function resolveAuthReturnPath(value: unknown, fallback = '/dashboard'): string {
+  const redirect = typeof value === 'string' ? value.trim() : ''
+  if (!redirect) return fallback
+  if (!redirect.startsWith('/') || redirect.startsWith('//')) return fallback
+  if (redirect.includes('\n') || redirect.includes('\r')) return fallback
+  return redirect
+}
+
+/**
  * 将 router/index.ts 中 beforeEach 守卫的核心逻辑提取为可测试的函数
  */
 function simulateGuard(
   toPath: string,
   toMeta: Record<string, any>,
-  authState: MockAuthState
+  authState: MockAuthState,
+  toQuery: Record<string, unknown> = {},
+  toFullPath = toPath
 ): string | null {
   const requiresAuth = toMeta.requiresAuth !== false
   const requiresAdmin = toMeta.requiresAdmin === true
@@ -80,6 +94,10 @@ function simulateGuard(
     ) {
       if (authState.backendModeEnabled && !authState.isAdmin) {
         return null
+      }
+      const redirect = resolveAuthReturnPath(toQuery.redirect, '')
+      if (redirect) {
+        return redirect
       }
       return authState.isAdmin ? '/admin/dashboard' : '/dashboard'
     }
@@ -106,6 +124,9 @@ function simulateGuard(
 
   // 需要认证但未登录
   if (!authState.isAuthenticated) {
+    if (toPath === '/auth/oauth/authorize') {
+      return `/login?redirect=${encodeURIComponent(toFullPath)}`
+    }
     return '/login'
   }
 
@@ -189,6 +210,12 @@ describe('路由守卫逻辑', () => {
       const redirect = simulateGuard('/home', { requiresAuth: false }, authState)
       expect(redirect).toBeNull()
     })
+
+    it('访问第三方 OAuth 授权页时带完整地址跳到登录页', () => {
+      const fullPath = '/auth/oauth/authorize?response_type=code&client_id=ak_test&redirect_uri=https%3A%2F%2Fapp.example.com%2Fcallback'
+      const redirect = simulateGuard('/auth/oauth/authorize', {}, authState, {}, fullPath)
+      expect(redirect).toBe(`/login?redirect=${encodeURIComponent(fullPath)}`)
+    })
   })
 
   // --- 已认证普通用户 ---
@@ -209,6 +236,27 @@ describe('路由守卫逻辑', () => {
 
     it('访问 /register 重定向到 /dashboard', () => {
       const redirect = simulateGuard('/register', { requiresAuth: false }, authState)
+      expect(redirect).toBe('/dashboard')
+    })
+
+    it('已登录后访问带 redirect 的 /login 会回到第三方 OAuth 授权页', () => {
+      const authorizePath = '/auth/oauth/authorize?response_type=code&client_id=ak_test&redirect_uri=https%3A%2F%2Fapp.example.com%2Fcallback'
+      const redirect = simulateGuard(
+        '/login',
+        { requiresAuth: false },
+        authState,
+        { redirect: authorizePath },
+      )
+      expect(redirect).toBe(authorizePath)
+    })
+
+    it('已登录后访问带协议相对 redirect 的 /login 会走默认仪表盘', () => {
+      const redirect = simulateGuard(
+        '/login',
+        { requiresAuth: false },
+        authState,
+        { redirect: '//evil.example.com/callback' },
+      )
       expect(redirect).toBe('/dashboard')
     })
 

@@ -13,7 +13,8 @@ import { useRoutePrefetch } from '@/composables/useRoutePrefetch'
 import { getSetupStatus } from '@/api/setup'
 import { customActivityRouteRecords, findCustomActivityRoute } from '@/custom/activity/routes'
 import { findCustomModelMarketplaceRoute } from '@/custom/modelMarketplace/routes'
-import { customOAuthAppRouteRecords } from '@/custom/oauthapp/routes'
+import { customOAuthAppRouteRecords, isCustomOAuthAuthorizeRoute } from '@/custom/oauthapp/routes'
+import { resolveAuthReturnPath } from '@/custom/oauthapp/authReturn'
 import { resolveCompletedSetupRedirectPath } from './setupRedirect'
 import { resolveDocumentTitle } from './title'
 
@@ -821,6 +822,13 @@ router.beforeEach(async (to, _from, next) => {
         next()
         return
       }
+      const redirect = resolveAuthReturnPath(to.query.redirect, '')
+      if (redirect) {
+        // 第三方 OAuth 授权页会把完整 authorize 地址放进 redirect；
+        // 登录/注册完成后必须优先回到原地址，不能被通用仪表盘跳转吞掉参数。
+        next(redirect)
+        return
+      }
       // Admin users go to admin dashboard, regular users go to user dashboard
       next(authStore.isAdmin ? '/admin/dashboard' : '/dashboard')
       return
@@ -839,6 +847,15 @@ router.beforeEach(async (to, _from, next) => {
 
   // Route requires authentication
   if (!authStore.isAuthenticated) {
+    if (isCustomOAuthAuthorizeRoute(to.path)) {
+      // 授权页本身需要登录，但 OAuth 参数只能保留在完整 URL 中；
+      // 未登录时用 redirect 回到原 authorize 地址，登录/注册成功后继续原授权流程。
+      next({
+        path: '/login',
+        query: { redirect: to.fullPath },
+      })
+      return
+    }
     if (to.path === '/auth/callback-authorize') {
       const callback = getSingleQueryString(to.query.callback)
       next({

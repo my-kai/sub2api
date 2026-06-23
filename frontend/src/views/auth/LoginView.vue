@@ -176,12 +176,12 @@
     <template v-if="!backendModeEnabled" #footer>
       <p class="text-gray-500 dark:text-dark-400">
         {{ t('auth.dontHaveAccount') }}
-        <router-link
-          to="/register"
+        <RouterLink
+          :to="registerRouteLocation"
           class="font-medium text-primary-600 transition-colors hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300"
         >
           {{ t('auth.signUp') }}
-        </router-link>
+        </RouterLink>
       </p>
     </template>
   </AuthLayout>
@@ -199,7 +199,7 @@
 
 <script setup lang="ts">
 import { computed, ref, reactive, onMounted, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { AuthLayout } from '@/components/layout'
 import LinuxDoOAuthSection from '@/components/auth/LinuxDoOAuthSection.vue'
@@ -209,6 +209,7 @@ import WechatOAuthSection from '@/components/auth/WechatOAuthSection.vue'
 import EmailOAuthButtons from '@/components/auth/EmailOAuthButtons.vue'
 import LoginAgreementPrompt from '@/components/auth/LoginAgreementPrompt.vue'
 import TotpLoginModal from '@/components/auth/TotpLoginModal.vue'
+import { buildAuthSwitchQuery, resolveAuthReturnPathFromQuery } from '@/custom/oauthapp/authReturn'
 import Icon from '@/components/icons/Icon.vue'
 import TurnstileWidget from '@/components/TurnstileWidget.vue'
 import { useAuthStore, useAppStore } from '@/stores'
@@ -285,6 +286,11 @@ const agreementGateActive = computed(
 const authActionDisabled = computed(
   () => isLoading.value || !publicSettingsLoaded.value || agreementGateActive.value
 )
+
+const registerRouteLocation = computed(() => ({
+  path: '/register',
+  query: buildAuthSwitchQuery(router.currentRoute.value.query),
+}))
 
 const showOAuthLogin = computed(
   () =>
@@ -477,7 +483,7 @@ async function redirectAfterLogin(): Promise<void> {
     return
   }
 
-  const redirectTo = (currentQuery.redirect as string) || '/dashboard'
+  const redirectTo = resolveAuthReturnPathFromQuery(currentQuery)
   await router.push(redirectTo)
 }
 

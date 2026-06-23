@@ -286,12 +286,12 @@
     <template #footer>
       <p class="text-gray-500 dark:text-dark-400">
         {{ t('auth.alreadyHaveAccount') }}
-        <router-link
-          to="/login"
+        <RouterLink
+          :to="loginRouteLocation"
           class="font-medium text-primary-600 transition-colors hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300"
         >
           {{ t('auth.signIn') }}
-        </router-link>
+        </RouterLink>
       </p>
     </template>
   </AuthLayout>
@@ -299,7 +299,7 @@
 
 <script setup lang="ts">
 import { computed, ref, reactive, onMounted, onUnmounted, watch } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
+import { RouterLink, useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { AuthLayout } from '@/components/layout'
 import LinuxDoOAuthSection from '@/components/auth/LinuxDoOAuthSection.vue'
@@ -307,6 +307,7 @@ import OidcOAuthSection from '@/components/auth/OidcOAuthSection.vue'
 import WechatOAuthSection from '@/components/auth/WechatOAuthSection.vue'
 import EmailOAuthButtons from '@/components/auth/EmailOAuthButtons.vue'
 import LoginAgreementPrompt from '@/components/auth/LoginAgreementPrompt.vue'
+import { buildAuthSwitchQuery, resolveAuthReturnPathFromQuery } from '@/custom/oauthapp/authReturn'
 import Icon from '@/components/icons/Icon.vue'
 import TurnstileWidget from '@/components/TurnstileWidget.vue'
 import { useAuthStore, useAppStore } from '@/stores'
@@ -433,6 +434,11 @@ const agreementGateActive = computed(
 const registrationActionDisabled = computed(
   () => isLoading.value || !settingsLoaded.value || agreementGateActive.value
 )
+
+const loginRouteLocation = computed(() => ({
+  path: '/login',
+  query: buildAuthSwitchQuery(route.query),
+}))
 
 watch(validationToastMessage, (value, previousValue) => {
   if (value && value !== previousValue) {
@@ -872,6 +878,7 @@ async function handleRegister(): Promise<void> {
           turnstile_token: turnstileToken.value,
           promo_code: formData.promo_code || undefined,
           invitation_code: formData.invitation_code || undefined,
+          redirect: resolveAuthReturnPathFromQuery(route.query, ''),
           ...(affCode ? { aff_code: affCode } : {})
         })
       )
@@ -895,8 +902,8 @@ async function handleRegister(): Promise<void> {
     // Show success toast
     appStore.showSuccess(t('auth.accountCreatedSuccess', { siteName: siteName.value }))
 
-    // Redirect to dashboard
-    await router.push('/dashboard')
+    // 注册可能来自第三方 OAuth 授权页，优先回到原授权地址继续发放 code。
+    await router.push(resolveAuthReturnPathFromQuery(route.query))
   } catch (error: unknown) {
     // Reset Turnstile on error
     if (turnstileRef.value) {
