@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-label="AI生图">
+  <defs>
+    <linearGradient id="ai-bg" x1="14" y1="12" x2="116" y2="118" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8b5cf6"/>
+      <stop offset="0.52" stop-color="#ec4899"/>
+      <stop offset="1" stop-color="#f97316"/>
+    </linearGradient>
+    <linearGradient id="ai-frame" x1="32" y1="30" x2="96" y2="98" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#fce7f3"/>
+    </linearGradient>
+  </defs>
+  <rect x="10" y="10" width="108" height="108" rx="30" fill="url(#ai-bg)"/>
+  <rect x="30" y="32" width="68" height="64" rx="14" fill="url(#ai-frame)"/>
+  <path d="M39 82l14-16 12 12 10-13 14 17" fill="none" stroke="#db2777" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="77" cy="52" r="7" fill="#f97316"/>
+  <path d="M42 47h16M42 58h10" stroke="#7c3aed" stroke-width="5" stroke-linecap="round"/>
+  <path d="M93 23l3 8 8 3-8 3-3 8-3-8-8-3 8-3 3-8ZM34 92l2 6 6 2-6 2-2 6-2-6-6-2 6-2 2-6Z" fill="#fff7ed"/>
+</svg>

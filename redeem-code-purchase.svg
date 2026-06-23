@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-label="兑换码购买">
+  <defs>
+    <linearGradient id="redeem-bg" x1="16" y1="12" x2="112" y2="116" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6366f1"/>
+      <stop offset="1" stop-color="#0ea5e9"/>
+    </linearGradient>
+    <linearGradient id="redeem-card" x1="30" y1="34" x2="98" y2="94" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#dbeafe"/>
+    </linearGradient>
+  </defs>
+  <rect x="10" y="10" width="108" height="108" rx="30" fill="url(#redeem-bg)"/>
+  <path d="M36 38h56a10 10 0 0 1 10 10v12a8 8 0 0 0 0 16v12a10 10 0 0 1-10 10H36a10 10 0 0 1-10-10V76a8 8 0 0 0 0-16V48a10 10 0 0 1 10-10Z" fill="url(#redeem-card)"/>
+  <path d="M46 58h30M46 72h18" stroke="#2563eb" stroke-width="6" stroke-linecap="round"/>
+  <path d="M84 54v28M73 65l11-11 11 11" stroke="#1d4ed8" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M84 82c-9 0-16 4-16 9h32c0-5-7-9-16-9Z" fill="#2563eb"/>
+</svg>

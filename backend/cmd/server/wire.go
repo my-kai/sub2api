@@ -14,7 +14,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	customactivityruntime "github.com/Wei-Shaw/sub2api/internal/custom/activity/runtime"
 	customcallbackauth "github.com/Wei-Shaw/sub2api/internal/custom/callbackauth"
-	customimagegen "github.com/Wei-Shaw/sub2api/internal/custom/imagegen"
+	customoauthapp "github.com/Wei-Shaw/sub2api/internal/custom/oauthapp"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/payment"
 	"github.com/Wei-Shaw/sub2api/internal/repository"
@@ -44,7 +44,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 		handler.ProviderSet,
 		customactivityruntime.ProvideBundleWithMainDeps,
 		customcallbackauth.ProvideBundle,
-		customimagegen.ProvideBundle,
+		customoauthapp.ProvideBundle,
 
 		// Server layer ProviderSet
 		server.ProviderSet,
@@ -106,17 +106,10 @@ func provideCleanup(
 	paymentOrderExpiry *service.PaymentOrderExpiryService,
 	channelMonitorRunner *service.ChannelMonitorRunner,
 	quotaFlusher *service.UserPlatformQuotaUsageFlusher,
-	customImageGen *customimagegen.Bundle,
 ) func() {
-	customImageGenCtx, stopCustomImageGen := context.WithCancel(context.Background())
-	if customImageGen != nil {
-		go customImageGen.RunWorker(customImageGenCtx)
-	}
-
 	return func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		defer stopCustomImageGen()
 
 		type cleanupStep struct {
 			name string

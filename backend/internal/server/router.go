@@ -14,10 +14,8 @@ import (
 	customannouncementroutes "github.com/Wei-Shaw/sub2api/internal/custom/announcements/routes"
 	customcallbackauth "github.com/Wei-Shaw/sub2api/internal/custom/callbackauth"
 	customcallbackauthroutes "github.com/Wei-Shaw/sub2api/internal/custom/callbackauth/routes"
-	customimagegen "github.com/Wei-Shaw/sub2api/internal/custom/imagegen"
-	customimagegenroutes "github.com/Wei-Shaw/sub2api/internal/custom/imagegen/routes"
-	customimagegenhandoff "github.com/Wei-Shaw/sub2api/internal/custom/imagegenhandoff"
-	customimagegenhandoffroutes "github.com/Wei-Shaw/sub2api/internal/custom/imagegenhandoff/routes"
+	customoauthapp "github.com/Wei-Shaw/sub2api/internal/custom/oauthapp"
+	customoauthapproutes "github.com/Wei-Shaw/sub2api/internal/custom/oauthapp/routes"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/server/routes"
@@ -41,12 +39,11 @@ func SetupRouter(
 	subscriptionService *service.SubscriptionService,
 	opsService *service.OpsService,
 	settingService *service.SettingService,
-	userService *service.UserService,
 	cfg *config.Config,
 	redisClient *redis.Client,
 	customActivity *customactivityruntime.Bundle,
-	customImageGen *customimagegen.Bundle,
 	customCallbackAuth *customcallbackauth.Bundle,
+	customOAuthApp *customoauthapp.Bundle,
 ) *gin.Engine {
 	// 缓存 iframe 页面的 origin 列表，用于动态注入 CSP frame-src
 	var cachedFrameOrigins atomic.Pointer[[]string]
@@ -96,7 +93,7 @@ func SetupRouter(
 	}
 
 	// 注册路由
-	registerRoutes(r, handlers, jwtAuth, adminAuth, apiKeyAuth, apiKeyService, subscriptionService, opsService, settingService, userService, cfg, redisClient, customActivity, customImageGen, customCallbackAuth)
+	registerRoutes(r, handlers, jwtAuth, adminAuth, apiKeyAuth, apiKeyService, subscriptionService, opsService, settingService, cfg, redisClient, customActivity, customCallbackAuth, customOAuthApp)
 
 	return r
 }
@@ -112,12 +109,11 @@ func registerRoutes(
 	subscriptionService *service.SubscriptionService,
 	opsService *service.OpsService,
 	settingService *service.SettingService,
-	userService *service.UserService,
 	cfg *config.Config,
 	redisClient *redis.Client,
 	customActivity *customactivityruntime.Bundle,
-	customImageGen *customimagegen.Bundle,
 	customCallbackAuth *customcallbackauth.Bundle,
+	customOAuthApp *customoauthapp.Bundle,
 ) {
 	// 通用路由（健康检查、状态等）
 	routes.RegisterCommonRoutes(r)
@@ -133,11 +129,40 @@ func registerRoutes(
 	routes.RegisterPaymentRoutes(v1, h.Payment, h.PaymentWebhook, h.Admin.Payment, jwtAuth, adminAuth, settingService)
 	registerCustomAnnouncementRoutes(v1, cfg.Pricing.DataDir, adminAuth, settingService)
 	registerCustomCallbackAuthRoutes(v1, customCallbackAuth, jwtAuth, settingService)
+	registerCustomOAuthApplicationRoutes(v1, customOAuthApp, jwtAuth, adminAuth, settingService)
 	registerCustomActivityRoutes(v1, customActivity, jwtAuth, adminAuth, settingService)
-	registerCustomImageGenHandoffRoutes(v1, cfg.ImageGen, userService, jwtAuth, settingService)
-	registerCustomImageGenerationRoutes(v1, customImageGen, jwtAuth, adminAuth, settingService)
 
 	handler.RegisterPageRoutes(v1, cfg.Pricing.DataDir, gin.HandlerFunc(jwtAuth), gin.HandlerFunc(adminAuth), settingService)
+}
+
+// registerCustomOAuthApplicationRoutes 只在主仓路由层追加第三方 OAuth 应用入口。
+//
+// 应用密钥、白名单和授权码消费逻辑都在 internal/custom/oauthapp 内部实现；这里仅复用
+// 主仓用户/管理员鉴权与后端模式守卫，避免改动主仓登录和 API Key 核心链路。
+func registerCustomOAuthApplicationRoutes(
+	v1 *gin.RouterGroup,
+	bundle *customoauthapp.Bundle,
+	jwtAuth middleware2.JWTAuthMiddleware,
+	adminAuth middleware2.AdminAuthMiddleware,
+	settingService *service.SettingService,
+) {
+	if v1 == nil || bundle == nil || bundle.Handler == nil {
+		return
+	}
+
+	customoauthapproutes.UseAuthorizePageRedirect(v1, bundle.Handler)
+
+	user := v1.Group("")
+	user.Use(gin.HandlerFunc(jwtAuth))
+	user.Use(middleware2.BackendModeUserGuard(settingService))
+	customoauthapproutes.RegisterUserRoutes(user, bundle.Handler)
+
+	admin := v1.Group("/admin")
+	admin.Use(gin.HandlerFunc(adminAuth))
+	admin.Use(middleware2.AdminComplianceGuard(settingService))
+	customoauthapproutes.RegisterAdminRoutes(admin, bundle.Handler)
+
+	customoauthapproutes.RegisterPublicRoutes(v1, bundle.Handler)
 }
 
 // registerCustomActivityRoutes 只在主仓路由层追加活动中心入口。
@@ -214,65 +239,4 @@ func registerCustomCallbackAuthRoutes(
 	customcallbackauthroutes.RegisterUserRoutes(user, bundle.Handler)
 
 	customcallbackauthroutes.RegisterExchangeRoutes(v1, bundle.Handler)
-}
-
-// registerCustomImageGenHandoffRoutes 只注册 sub2api-ex 到独立 image-gen 的登录态交接入口。
-//
-// 一次性 code 的生成/消费逻辑放在 internal/custom/imagegenhandoff；这里仅复用
-// 主仓用户鉴权与后端模式守卫。exchange 端点不挂用户 JWT，只校验服务间 secret。
-func registerCustomImageGenHandoffRoutes(
-	v1 *gin.RouterGroup,
-	cfg config.ImageGenConfig,
-	userService *service.UserService,
-	jwtAuth middleware2.JWTAuthMiddleware,
-	settingService *service.SettingService,
-) {
-	if v1 == nil {
-		return
-	}
-
-	handoffCfg := customimagegenhandoff.Config{
-		BaseURL:        cfg.BaseURL,
-		ExchangeSecret: cfg.ExchangeSecret,
-		CodeTTLSeconds: cfg.CodeTTLSeconds,
-	}
-	store := customimagegenhandoff.NewMemoryStoreForConfig(handoffCfg)
-	handler := customimagegenhandoff.NewHandler(handoffCfg, store, userService)
-
-	user := v1.Group("")
-	user.Use(gin.HandlerFunc(jwtAuth))
-	user.Use(middleware2.BackendModeUserGuard(settingService))
-	customimagegenhandoffroutes.RegisterUserRoutes(user, handler)
-
-	customimagegenhandoffroutes.RegisterServiceRoutes(v1, handler)
-}
-
-// registerCustomImageGenerationRoutes 只在主仓路由层追加 custom 生图入口。
-//
-// 生图业务 handler、service、store 都在 internal/custom/imagegen 内部装配；这里仅复用
-// 主仓现有鉴权与模式守卫，避免把二开逻辑混入主仓核心路由实现。
-func registerCustomImageGenerationRoutes(
-	v1 *gin.RouterGroup,
-	bundle *customimagegen.Bundle,
-	jwtAuth middleware2.JWTAuthMiddleware,
-	adminAuth middleware2.AdminAuthMiddleware,
-	settingService *service.SettingService,
-) {
-	if v1 == nil || bundle == nil || bundle.Handler == nil {
-		return
-	}
-
-	user := v1.Group("")
-	user.Use(customimagegenroutes.BearerTokenQueryFallback())
-	user.Use(gin.HandlerFunc(jwtAuth))
-	user.Use(middleware2.BackendModeUserGuard(settingService))
-	customimagegenroutes.RegisterUserRoutes(user, bundle.Handler)
-
-	// 公共图库保持匿名可读；handler 内部会按可用登录态决定是否展示提示词。
-	customimagegenroutes.RegisterPublicGalleryRoute(v1, bundle.Handler)
-
-	admin := v1.Group("/admin")
-	admin.Use(gin.HandlerFunc(adminAuth))
-	admin.Use(middleware2.AdminComplianceGuard(settingService))
-	customimagegenroutes.RegisterAdminRoutes(admin, bundle.Handler)
 }

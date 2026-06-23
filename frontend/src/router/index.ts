@@ -12,8 +12,8 @@ import { useNavigationLoadingState } from '@/composables/useNavigationLoading'
 import { useRoutePrefetch } from '@/composables/useRoutePrefetch'
 import { getSetupStatus } from '@/api/setup'
 import { customActivityRouteRecords, findCustomActivityRoute } from '@/custom/activity/routes'
-import { findCustomImagegenRoute } from '@/custom/imagegen/routes'
 import { findCustomModelMarketplaceRoute } from '@/custom/modelMarketplace/routes'
+import { customOAuthAppRouteRecords } from '@/custom/oauthapp/routes'
 import { resolveCompletedSetupRedirectPath } from './setupRedirect'
 import { resolveDocumentTitle } from './title'
 
@@ -150,6 +150,7 @@ const routes: RouteRecordRaw[] = [
       title: 'Authorize Login'
     }
   },
+  ...customOAuthAppRouteRecords,
   {
     path: '/forgot-password',
     name: 'ForgotPassword',
@@ -399,41 +400,6 @@ const routes: RouteRecordRaw[] = [
     }
   },
 
-  // ==================== Custom Image Generation Routes ====================
-  {
-    path: '/custom/images',
-    name: 'CustomImageGeneration',
-    component: () => import('@/custom/imagegen/views/ImageGenRedirectView.vue'),
-    meta: {
-      requiresAuth: true,
-      requiresAdmin: false,
-      title: 'AI Image Generation',
-      titleKey: 'nav.customImageGeneration',
-    }
-  },
-  {
-    path: '/custom/images/history',
-    name: 'CustomImageHistory',
-    component: () => import('@/custom/imagegen/views/ImageGenRedirectView.vue'),
-    meta: {
-      requiresAuth: true,
-      requiresAdmin: false,
-      title: 'My Images',
-      titleKey: 'nav.customImageHistory',
-    }
-  },
-  {
-    path: '/custom/images/gallery',
-    name: 'CustomImageGallery',
-    component: () => import('@/custom/imagegen/views/ImageGenRedirectView.vue'),
-    meta: {
-      requiresAuth: true,
-      requiresAdmin: false,
-      title: 'Public Gallery',
-      titleKey: 'nav.customImageGallery',
-    }
-  },
-
   // ==================== Admin Routes ====================
   {
     path: '/admin',
@@ -636,17 +602,6 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
-    path: '/admin/custom/images',
-    name: 'AdminCustomImages',
-    component: () => import('@/custom/imagegen/views/ImageGenRedirectView.vue'),
-    meta: {
-      requiresAuth: true,
-      requiresAdmin: true,
-      title: 'Image Generation Config',
-      titleKey: 'nav.customImageAdmin',
-    }
-  },
-  {
     path: '/admin/affiliates',
     redirect: '/admin/affiliates/invites'
   },
@@ -809,7 +764,7 @@ router.beforeEach(async (to, _from, next) => {
   // Set page title
   const appStore = useAppStore()
   // For custom pages, use menu item label as document title
-  if (typeof to.name === 'string' && (findCustomActivityRoute(to.name) || findCustomImagegenRoute(to.name) || findCustomModelMarketplaceRoute(to.name))) {
+  if (typeof to.name === 'string' && (findCustomActivityRoute(to.name) || findCustomModelMarketplaceRoute(to.name))) {
     document.title = resolveDocumentTitle(to.meta.title, appStore.siteName, to.meta.titleKey as string)
   } else if (to.name === 'CustomPage') {
     const id = to.params.id as string

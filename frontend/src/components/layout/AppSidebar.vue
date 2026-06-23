@@ -69,41 +69,43 @@
               </div>
             </template>
             <!-- Normal item (no children) -->
-            <a
-              v-if="item.externalHref"
-              :href="item.externalHref"
-              target="_blank"
-              rel="noopener noreferrer"
-              class="sidebar-link mb-1"
-              :class="{ 'sidebar-link-collapsed': sidebarCollapsed }"
-              :title="sidebarCollapsed ? item.label : undefined"
-              @click="handleMenuItemClick(item.path)"
-            >
-              <span v-if="item.iconSvg" class="h-5 w-5 flex-shrink-0 sidebar-svg-icon" v-html="sanitizeSvg(item.iconSvg)"></span>
-              <component v-else :is="item.icon" class="h-5 w-5 flex-shrink-0" />
-              <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
-            </a>
-            <router-link
-              v-else
-              :to="item.path"
-              class="sidebar-link mb-1"
-              :class="{ 'sidebar-link-active': isActive(item.path), 'sidebar-link-collapsed': sidebarCollapsed }"
-              :title="sidebarCollapsed ? item.label : undefined"
-              :id="
-                item.path === '/admin/accounts'
-                  ? 'sidebar-channel-manage'
-                  : item.path === '/admin/groups'
-                    ? 'sidebar-group-manage'
-                    : item.path === '/admin/redeem'
-                      ? 'sidebar-wallet'
-                      : undefined
-              "
-              @click="handleMenuItemClick(item.path)"
-            >
-              <span v-if="item.iconSvg" class="h-5 w-5 flex-shrink-0 sidebar-svg-icon" v-html="sanitizeSvg(item.iconSvg)"></span>
-              <component v-else :is="item.icon" class="h-5 w-5 flex-shrink-0" />
-              <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
-            </router-link>
+            <template v-else>
+              <a
+                v-if="item.externalHref"
+                :href="item.externalHref"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="sidebar-link mb-1"
+                :class="{ 'sidebar-link-collapsed': sidebarCollapsed }"
+                :title="sidebarCollapsed ? item.label : undefined"
+                @click="handleMenuItemClick(item.path)"
+              >
+                <span v-if="item.iconSvg" class="h-5 w-5 flex-shrink-0 sidebar-svg-icon" v-html="sanitizeSvg(item.iconSvg)"></span>
+                <component v-else :is="item.icon" class="h-5 w-5 flex-shrink-0" />
+                <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
+              </a>
+              <router-link
+                v-else
+                :to="item.path"
+                class="sidebar-link mb-1"
+                :class="{ 'sidebar-link-active': isActive(item.path), 'sidebar-link-collapsed': sidebarCollapsed }"
+                :title="sidebarCollapsed ? item.label : undefined"
+                :id="
+                  item.path === '/admin/accounts'
+                    ? 'sidebar-channel-manage'
+                    : item.path === '/admin/groups'
+                      ? 'sidebar-group-manage'
+                      : item.path === '/admin/redeem'
+                        ? 'sidebar-wallet'
+                        : undefined
+                "
+                @click="handleMenuItemClick(item.path)"
+              >
+                <span v-if="item.iconSvg" class="h-5 w-5 flex-shrink-0 sidebar-svg-icon" v-html="sanitizeSvg(item.iconSvg)"></span>
+                <component v-else :is="item.icon" class="h-5 w-5 flex-shrink-0" />
+                <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">{{ item.label }}</span>
+              </router-link>
+            </template>
           </template>
         </div>
 
@@ -230,8 +232,8 @@ import { useI18n } from 'vue-i18n'
 import { useAdminSettingsStore, useAppStore, useAuthStore, useOnboardingStore } from '@/stores'
 import VersionBadge from '@/components/common/VersionBadge.vue'
 import { findCustomActivityRoute } from '@/custom/activity/routes'
-import { findCustomImagegenRoute } from '@/custom/imagegen/routes'
 import { findCustomModelMarketplaceRoute } from '@/custom/modelMarketplace/routes'
+import { findCustomOAuthAppRoute } from '@/custom/oauthapp/routes'
 import { sanitizeSvg } from '@/utils/sanitize'
 import { FeatureFlags, makeSidebarFlag } from '@/utils/featureFlags'
 
@@ -676,21 +678,6 @@ const PriceTagIcon = {
     )
 }
 
-const SparklesIcon = {
-  render: () =>
-    h(
-      'svg',
-      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
-      [
-        h('path', {
-          'stroke-linecap': 'round',
-          'stroke-linejoin': 'round',
-          d: 'M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z'
-        })
-      ]
-    )
-}
-
 const ChevronDownIcon = {
   render: () =>
     h(
@@ -749,6 +736,54 @@ function customMenuNavItem(item: { id: string; label: string; icon_svg: string; 
     icon: null,
     iconSvg: item.icon_svg,
     externalHref: customMenuExternalHref(item),
+  }
+}
+
+function normalizedMenuLabel(label: string): string {
+  return label.trim().toLowerCase()
+}
+
+function collectNavLabels(items: NavItem[]): Set<string> {
+  const labels = new Set<string>()
+  for (const item of items) {
+    labels.add(normalizedMenuLabel(item.label))
+    if (item.children) {
+      for (const label of collectNavLabels(item.children)) {
+        labels.add(label)
+      }
+    }
+  }
+  return labels
+}
+
+function collectNavPaths(items: NavItem[]): Set<string> {
+  const paths = new Set<string>()
+  for (const item of items) {
+    paths.add(item.path)
+    if (item.children) {
+      for (const path of collectNavPaths(item.children)) {
+        paths.add(path)
+      }
+    }
+  }
+  return paths
+}
+
+function appendUniqueCustomAdminMenus(items: NavItem[], customItems: typeof customMenuItemsForAdmin.value): void {
+  const existingLabels = collectNavLabels(items)
+  const existingPaths = collectNavPaths(items)
+
+  for (const customItem of customItems) {
+    const navItem = customMenuNavItem(customItem)
+    const labelKey = normalizedMenuLabel(navItem.label)
+
+    // 内置管理菜单优先；历史自定义菜单如果和内置项同名/同路径，就不再重复展示。
+    if (existingLabels.has(labelKey) || existingPaths.has(navItem.path)) {
+      continue
+    }
+    items.push(navItem)
+    existingLabels.add(labelKey)
+    existingPaths.add(navItem.path)
   }
 }
 
@@ -832,8 +867,8 @@ const adminNavItems = computed((): NavItem[] => {
     { path: '/admin/risk-control', label: t('nav.riskControl'), icon: ShieldIcon, hideInSimpleMode: true, featureFlag: flagRiskControl },
     { path: '/admin/redeem', label: t('nav.redeemCodes'), icon: TicketIcon, hideInSimpleMode: true },
     { path: '/admin/promo-codes', label: t('nav.promoCodes'), icon: GiftIcon, hideInSimpleMode: true },
+    { path: customOAuthAppPath('AdminCustomOAuthApplications'), label: '应用管理', icon: KeyIcon, hideInSimpleMode: true },
     { path: customActivityPath('AdminCustomActivities', '/admin/custom/activities'), label: '活动管理', icon: GiftIcon },
-    { path: customImagegenPath('AdminCustomImages'), label: t('nav.customImageAdmin'), icon: SparklesIcon },
     {
       path: '/admin/affiliates',
       label: t('nav.affiliateManagement'),
@@ -856,7 +891,7 @@ const adminNavItems = computed((): NavItem[] => {
       featureFlag: flagAdminPayment,
       children: [
         { path: '/admin/orders/dashboard', label: t('nav.paymentDashboard'), icon: ChartIcon },
-        { path: '/admin/orders', label: t('nav.orderManagement'), icon: OrderIcon },
+        { path: '/admin/orders', label: t('nav.orderList'), icon: OrderIcon },
         { path: '/admin/orders/plans', label: t('nav.paymentPlans'), icon: CreditCardIcon },
       ],
     },
@@ -870,16 +905,12 @@ const adminNavItems = computed((): NavItem[] => {
     const filtered = visible.filter(item => !item.hideInSimpleMode)
     filtered.push({ path: '/keys', label: t('nav.apiKeys'), icon: KeyIcon })
     filtered.push({ path: '/admin/settings', label: t('nav.settings'), icon: CogIcon })
-    for (const cm of customMenuItemsForAdmin.value) {
-      filtered.push(customMenuNavItem(cm))
-    }
+    appendUniqueCustomAdminMenus(filtered, customMenuItemsForAdmin.value)
     return filtered
   }
 
   visible.push({ path: '/admin/settings', label: t('nav.settings'), icon: CogIcon })
-  for (const cm of customMenuItemsForAdmin.value) {
-    visible.push(customMenuNavItem(cm))
-  }
+  appendUniqueCustomAdminMenus(visible, customMenuItemsForAdmin.value)
   return visible
 })
 
@@ -894,9 +925,9 @@ function customActivityPath(name: string, fallbackPath = '/custom/activities'): 
   return findCustomActivityRoute(name)?.path || fallbackPath
 }
 
-// custom 生图路径集中从 custom 路由声明读取，避免菜单和 router 分别维护字符串。
-function customImagegenPath(name: string): string {
-  return findCustomImagegenRoute(name)?.path || '/custom/images'
+// custom OAuth 应用管理路径集中从 custom 路由声明读取，降低主仓入口维护成本。
+function customOAuthAppPath(name: string): string {
+  return findCustomOAuthAppRoute(name)?.path || '/admin/custom/oauth-applications'
 }
 
 // 模型广场复用可用渠道接口和开关；路径仍集中在 custom 声明中，方便后续二开迁移。
