@@ -3,6 +3,8 @@
 package service
 
 import (
+	"context"
+	"errors"
 	"testing"
 )
 
@@ -81,5 +83,23 @@ func TestBuildUsageBillingCommand_SubscriptionAppliesRateMultiplier(t *testing.T
 				t.Errorf("BalanceCost = %v, want %v", cmd.BalanceCost, tt.wantBalance)
 			}
 		})
+	}
+}
+
+func TestApplyUsageBillingBalanceRequiresUnifiedRepository(t *testing.T) {
+	groupID := int64(7)
+	p := &postUsageBillingParams{
+		Cost:    &CostBreakdown{TotalCost: 1.0, ActualCost: 1.0},
+		User:    &User{ID: 1},
+		APIKey:  &APIKey{ID: 2, GroupID: &groupID},
+		Account: &Account{ID: 3},
+	}
+
+	applied, err := applyUsageBilling(context.Background(), "req-1", nil, p, &billingDeps{}, nil)
+	if applied {
+		t.Fatalf("balance billing must not be marked applied when unified repository is missing")
+	}
+	if !errors.Is(err, ErrBillingServiceUnavailable) {
+		t.Fatalf("expected ErrBillingServiceUnavailable, got %v", err)
 	}
 }

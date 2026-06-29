@@ -126,6 +126,7 @@ func (s *authRepoStub) GetRateLimitData(ctx context.Context, id int64) (*APIKeyR
 type authCacheStub struct {
 	getAuthCache   func(ctx context.Context, key string) (*APIKeyAuthCacheEntry, error)
 	setAuthKeys    []string
+	setAuthTTLs    []time.Duration
 	deleteAuthKeys []string
 }
 
@@ -158,6 +159,7 @@ func (s *authCacheStub) GetAuthCache(ctx context.Context, key string) (*APIKeyAu
 
 func (s *authCacheStub) SetAuthCache(ctx context.Context, key string, entry *APIKeyAuthCacheEntry, ttl time.Duration) error {
 	s.setAuthKeys = append(s.setAuthKeys, key)
+	s.setAuthTTLs = append(s.setAuthTTLs, ttl)
 	return nil
 }
 
@@ -242,11 +244,14 @@ func TestAPIKeyService_SnapshotRoundTrip_PreservesMessagesDispatchModelConfig(t 
 		Name:    "Audit Key",
 		Status:  StatusActive,
 		User: &User{
-			ID:          2,
-			Status:      StatusActive,
-			Role:        RoleUser,
-			Balance:     10,
-			Concurrency: 3,
+			ID:                       2,
+			Status:                   StatusActive,
+			Role:                     RoleUser,
+			Balance:                  10,
+			GiftBalance:              2.5,
+			GiftBalanceNextExpiresAt: ptrAuthCacheTime(time.Now().UTC().Add(time.Hour)),
+			AvailableBalance:         12.5,
+			Concurrency:              3,
 		},
 		Group: &Group{
 			ID:                    groupID,
@@ -268,13 +273,123 @@ func TestAPIKeyService_SnapshotRoundTrip_PreservesMessagesDispatchModelConfig(t 
 		},
 	}
 
-	snapshot := svc.snapshotFromAPIKey(context.Background(), apiKey)
+	snapshot, err := svc.snapshotFromAPIKey(context.Background(), apiKey)
+	require.NoError(t, err)
 	roundTrip := svc.snapshotToAPIKey(apiKey.Key, snapshot)
 
 	require.NotNil(t, roundTrip)
 	require.Equal(t, apiKey.Name, roundTrip.Name)
+	require.Equal(t, 2.5, roundTrip.User.GiftBalance)
+	require.NotNil(t, roundTrip.User.GiftBalanceNextExpiresAt)
+	require.Equal(t, 12.5, roundTrip.User.AvailableBalance)
 	require.NotNil(t, roundTrip.Group)
 	require.Equal(t, apiKey.Group.MessagesDispatchModelConfig, roundTrip.Group.MessagesDispatchModelConfig)
+}
+
+func TestAPIKeyService_LoadAuthCacheEntryClampsTTLToGiftExpiry(t *testing.T) {
+	cache := &authCacheStub{}
+	expiresAt := time.Now().UTC().Add(200 * time.Millisecond)
+	repo := &authRepoStub{
+		getByKeyForAuth: func(ctx context.Context, key string) (*APIKey, error) {
+			return &APIKey{
+				ID:     1,
+				UserID: 2,
+				Status: StatusActive,
+				User: &User{
+					ID:      2,
+					Status:  StatusActive,
+					Role:    RoleUser,
+					Balance: 10,
+				},
+			}, nil
+		},
+	}
+	cfg := &config.Config{
+		APIKeyAuth: config.APIKeyAuthCacheConfig{
+			L2TTLSeconds: 60,
+		},
+	}
+	svc := NewAPIKeyService(repo, nil, nil, nil, nil, cache, cfg)
+	svc.SetGiftCreditBalanceReader(&billingEligibilityGiftReaderStub{
+		giftBalance:   2.5,
+		nextExpiresAt: &expiresAt,
+	})
+
+	entry, err := svc.loadAuthCacheEntry(context.Background(), "k-gift-ttl", svc.authCacheKey("k-gift-ttl"))
+	require.NoError(t, err)
+	require.NotNil(t, entry)
+	require.Len(t, cache.setAuthTTLs, 1)
+	require.Greater(t, cache.setAuthTTLs[0], time.Duration(0))
+	require.LessOrEqual(t, cache.setAuthTTLs[0], time.Second)
+	require.NotNil(t, entry.Snapshot.User.GiftBalanceNextExpiresAt)
+	require.Equal(t, 12.5, entry.Snapshot.User.AvailableBalance)
+}
+
+func TestAuthCacheEntryTTLSkipsExpiredGiftSnapshot(t *testing.T) {
+	expiresAt := time.Now().UTC().Add(-time.Second)
+	ttl := authCacheEntryTTL(&APIKeyAuthCacheEntry{
+		Snapshot: &APIKeyAuthSnapshot{
+			User: APIKeyAuthUserSnapshot{
+				GiftBalanceNextExpiresAt: &expiresAt,
+			},
+		},
+	}, time.Minute, time.Now().UTC())
+	require.Zero(t, ttl)
+}
+
+func TestAPIKeyService_GetByKeyIgnoresExpiredGiftSnapshotInCache(t *testing.T) {
+	expiresAt := time.Now().UTC().Add(-time.Second)
+	cache := &authCacheStub{
+		getAuthCache: func(ctx context.Context, key string) (*APIKeyAuthCacheEntry, error) {
+			return &APIKeyAuthCacheEntry{
+				Snapshot: &APIKeyAuthSnapshot{
+					Version:  apiKeyAuthSnapshotVersion,
+					APIKeyID: 1,
+					UserID:   2,
+					Status:   StatusActive,
+					User: APIKeyAuthUserSnapshot{
+						ID:                       2,
+						Status:                   StatusActive,
+						Role:                     RoleUser,
+						Balance:                  10,
+						GiftBalance:              2.5,
+						GiftBalanceNextExpiresAt: &expiresAt,
+						AvailableBalance:         12.5,
+					},
+				},
+			}, nil
+		},
+	}
+	var repoCalls int32
+	repo := &authRepoStub{
+		getByKeyForAuth: func(ctx context.Context, key string) (*APIKey, error) {
+			atomic.AddInt32(&repoCalls, 1)
+			return &APIKey{
+				ID:     3,
+				UserID: 2,
+				Status: StatusActive,
+				User: &User{
+					ID:      2,
+					Status:  StatusActive,
+					Role:    RoleUser,
+					Balance: 10,
+				},
+			}, nil
+		},
+	}
+	svc := NewAPIKeyService(repo, nil, nil, nil, nil, cache, &config.Config{
+		APIKeyAuth: config.APIKeyAuthCacheConfig{L2TTLSeconds: 60},
+	})
+
+	apiKey, err := svc.GetByKey(context.Background(), "k-expired-gift")
+	require.NoError(t, err)
+	require.Equal(t, int64(3), apiKey.ID)
+	require.Equal(t, int32(1), atomic.LoadInt32(&repoCalls))
+	require.NotEmpty(t, cache.deleteAuthKeys)
+}
+
+func ptrAuthCacheTime(value time.Time) *time.Time {
+	return &value
 }
 
 func TestAPIKeyService_GetByKey_IgnoresLegacyAuthCacheSnapshotWithoutMessagesDispatchConfig(t *testing.T) {

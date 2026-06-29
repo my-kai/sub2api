@@ -9,18 +9,20 @@ import (
 )
 
 type User struct {
-	ID            int64      `json:"id"`
-	Email         string     `json:"email"`
-	Username      string     `json:"username"`
-	Role          string     `json:"role"`
-	Balance       float64    `json:"balance"`
-	Concurrency   int        `json:"concurrency"`
-	Status        string     `json:"status"`
-	AllowedGroups []int64    `json:"allowed_groups"`
-	LastActiveAt  *time.Time `json:"last_active_at,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
-	DeletedAt     *time.Time `json:"deleted_at,omitempty"`
+	ID               int64      `json:"id"`
+	Email            string     `json:"email"`
+	Username         string     `json:"username"`
+	Role             string     `json:"role"`
+	Balance          float64    `json:"balance"`
+	GiftBalance      float64    `json:"gift_balance"`
+	AvailableBalance float64    `json:"available_balance"`
+	Concurrency      int        `json:"concurrency"`
+	Status           string     `json:"status"`
+	AllowedGroups    []int64    `json:"allowed_groups"`
+	LastActiveAt     *time.Time `json:"last_active_at,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
+	DeletedAt        *time.Time `json:"deleted_at,omitempty"`
 
 	// 余额不足通知
 	BalanceNotifyEnabled       bool               `json:"balance_notify_enabled"`
@@ -612,16 +614,18 @@ type BulkAssignResult struct {
 
 // PromoCode 注册优惠码
 type PromoCode struct {
-	ID          int64      `json:"id"`
-	Code        string     `json:"code"`
-	BonusAmount float64    `json:"bonus_amount"`
-	MaxUses     int        `json:"max_uses"`
-	UsedCount   int        `json:"used_count"`
-	Status      string     `json:"status"`
-	ExpiresAt   *time.Time `json:"expires_at"`
-	Notes       string     `json:"notes"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	ID               int64      `json:"id"`
+	Code             string     `json:"code"`
+	BonusAmount      float64    `json:"bonus_amount"`
+	MaxUses          int        `json:"max_uses"`
+	UsedCount        int        `json:"used_count"`
+	Status           string     `json:"status"`
+	ExpiresAt        *time.Time `json:"expires_at"`
+	Notes            string     `json:"notes"`
+	CreditType       string     `json:"credit_type"`
+	GiftValidityDays int        `json:"gift_validity_days"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
 }
 
 // PromoCodeUsage 优惠码使用记录

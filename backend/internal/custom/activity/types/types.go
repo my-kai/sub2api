@@ -100,6 +100,7 @@ type RedPacketRainConfig struct {
 	BaseUnitAmount       string    `json:"base_unit_amount"`
 	MaxSingleReward      string    `json:"max_single_reward"`
 	ProbabilityStep      string    `json:"probability_step"`
+	GiftValidityDays     int       `json:"gift_validity_days"`
 	CreatedAt            time.Time `json:"created_at"`
 	UpdatedAt            time.Time `json:"updated_at"`
 }

@@ -269,11 +269,12 @@ func TestApiKeyAuthWithSubscriptionGoogleSetsGroupContext(t *testing.T) {
 		Hydrated: true,
 	}
 	user := &service.User{
-		ID:          7,
-		Role:        service.RoleUser,
-		Status:      service.StatusActive,
-		Balance:     10,
-		Concurrency: 3,
+		ID:               7,
+		Role:             service.RoleUser,
+		Status:           service.StatusActive,
+		Balance:          10,
+		Concurrency:      3,
+		AvailableBalance: 10,
 	}
 	apiKey := &service.APIKey{
 		ID:     100,
@@ -381,11 +382,12 @@ func TestApiKeyAuthWithSubscriptionGoogle_MarksUnavailableGroupBusinessLimited(t
 
 	groupID := int64(101)
 	user := &service.User{
-		ID:          7,
-		Role:        service.RoleUser,
-		Status:      service.StatusActive,
-		Balance:     10,
-		Concurrency: 3,
+		ID:               7,
+		Role:             service.RoleUser,
+		Status:           service.StatusActive,
+		Balance:          10,
+		Concurrency:      3,
+		AvailableBalance: 10,
 	}
 	apiKey := &service.APIKey{
 		ID:      100,
@@ -534,11 +536,12 @@ func TestApiKeyAuthWithSubscriptionGoogle_TouchesLastUsedOnSuccess(t *testing.T)
 	gin.SetMode(gin.TestMode)
 
 	user := &service.User{
-		ID:          11,
-		Role:        service.RoleUser,
-		Status:      service.StatusActive,
-		Balance:     10,
-		Concurrency: 3,
+		ID:               11,
+		Role:             service.RoleUser,
+		Status:           service.StatusActive,
+		Balance:          10,
+		Concurrency:      3,
+		AvailableBalance: 10,
 	}
 	apiKey := &service.APIKey{
 		ID:     201,
@@ -583,11 +586,12 @@ func TestApiKeyAuthWithSubscriptionGoogle_TouchFailureDoesNotBlock(t *testing.T)
 	gin.SetMode(gin.TestMode)
 
 	user := &service.User{
-		ID:          12,
-		Role:        service.RoleUser,
-		Status:      service.StatusActive,
-		Balance:     10,
-		Concurrency: 3,
+		ID:               12,
+		Role:             service.RoleUser,
+		Status:           service.StatusActive,
+		Balance:          10,
+		Concurrency:      3,
+		AvailableBalance: 10,
 	}
 	apiKey := &service.APIKey{
 		ID:     202,
@@ -629,11 +633,12 @@ func TestApiKeyAuthWithSubscriptionGoogle_TouchesLastUsedInStandardMode(t *testi
 	gin.SetMode(gin.TestMode)
 
 	user := &service.User{
-		ID:          13,
-		Role:        service.RoleUser,
-		Status:      service.StatusActive,
-		Balance:     10,
-		Concurrency: 3,
+		ID:               13,
+		Role:             service.RoleUser,
+		Status:           service.StatusActive,
+		Balance:          10,
+		Concurrency:      3,
+		AvailableBalance: 10,
 	}
 	apiKey := &service.APIKey{
 		ID:     203,
@@ -685,11 +690,12 @@ func TestApiKeyAuthWithSubscriptionGoogle_SubscriptionLimitExceededReturns429(t 
 		DailyLimitUSD:    &limit,
 	}
 	user := &service.User{
-		ID:          999,
-		Role:        service.RoleUser,
-		Status:      service.StatusActive,
-		Balance:     10,
-		Concurrency: 3,
+		ID:               999,
+		Role:             service.RoleUser,
+		Status:           service.StatusActive,
+		Balance:          10,
+		Concurrency:      3,
+		AvailableBalance: 10,
 	}
 	apiKey := &service.APIKey{
 		ID:     501,

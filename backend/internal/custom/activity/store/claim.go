@@ -7,10 +7,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/custom/activity/types"
+	gifttypes "github.com/Wei-Shaw/sub2api/internal/custom/giftcredit/types"
 )
 
 const activityRewardRedeemType = "activity_reward"
@@ -157,6 +159,7 @@ type ClaimTransactionInput struct {
 	ActivityTitle     string
 	CreatedAt         time.Time
 	CreditUserBalance bool
+	GiftValidityDays  int
 }
 
 // ClaimTransactionResult returns the inserted or previously-settled claim and fresh totals.
@@ -239,7 +242,7 @@ func (s *Store) SettleClaim(ctx context.Context, input ClaimTransactionInput, de
 
 	input.RewardAmount = normalizeAmountText(decision.RewardAmount)
 	if decision.CreditUserBalance && input.RewardAmount != "0.00000000" {
-		if err := addUserBalance(ctx, tx, input.UserID, input.RewardAmount); err != nil {
+		if err := insertActivityGiftCreditGrant(ctx, tx, input, claim.ID, createdAt); err != nil {
 			return ClaimTransactionResult{}, err
 		}
 		if err := insertActivityBalanceHistory(ctx, tx, input, claim.ID, createdAt); err != nil {
@@ -339,30 +342,60 @@ func lockSettlement(ctx context.Context, exec sqlExecutor, activityID int64) err
 	return nil
 }
 
-func addUserBalance(ctx context.Context, exec sqlExecutor, userID int64, amount string) error {
-	result, err := exec.ExecContext(ctx, `
-		UPDATE users
-		SET balance = balance + $1::decimal,
-		    total_recharged = total_recharged + $1::decimal,
-		    updated_at = NOW()
-		WHERE id = $2
-		  AND deleted_at IS NULL
-	`, amount, userID)
-	if err != nil {
-		return fmt.Errorf("credit red packet rain balance: %w", err)
+func insertActivityGiftCreditGrant(ctx context.Context, exec sqlExecutor, input ClaimTransactionInput, claimID int64, at time.Time) error {
+	if input.GiftValidityDays <= 0 {
+		return types.ErrInvalidInput
 	}
-	affected, _ := result.RowsAffected()
-	if affected == 0 {
-		return fmt.Errorf("credit red packet rain balance: user not found")
+	expiresAt := at.UTC().AddDate(0, 0, input.GiftValidityDays)
+	sourceID := fmt.Sprintf("activity:%d:round:%d:claim:%d", input.ActivityID, input.RoundID, claimID)
+	note := activityGiftCreditNote(input.ActivityTitle)
+	grantsTable, err := giftCreditTableName("custom_gift_credit_grants")
+	if err != nil {
+		return err
+	}
+	balancesTable, err := giftCreditTableName("custom_gift_credit_user_balances")
+	if err != nil {
+		return err
+	}
+
+	row := exec.QueryRowContext(ctx, `
+		INSERT INTO `+grantsTable+` (
+			user_id, source_type, source_id, original_amount, remaining_amount,
+			expires_at, status, note, created_at, updated_at
+		) VALUES (
+			$1, $2, $3, $4::decimal, $4::decimal, $5, $6, $7, $8, $8
+		)
+		RETURNING id
+	`, input.UserID, gifttypes.SourceActivityReward, sourceID, normalizeAmountText(input.RewardAmount),
+		expiresAt, gifttypes.StatusActive, note, at.UTC())
+	var grantID int64
+	if err := row.Scan(&grantID); err != nil {
+		return fmt.Errorf("create red packet rain gift credit grant: %w", err)
+	}
+
+	// 发放 grant 与聚合余额必须同事务更新，避免活动领取成功但可用额度缓存源未同步。
+	if _, err := exec.ExecContext(ctx, `
+		INSERT INTO `+balancesTable+` (
+			user_id, active_remaining_amount, next_expires_at, refreshed_at, updated_at
+		) VALUES (
+			$1, $2::decimal, $3, $4, $4
+		)
+		ON CONFLICT (user_id) DO UPDATE SET
+			active_remaining_amount = `+balancesTable+`.active_remaining_amount + EXCLUDED.active_remaining_amount,
+			next_expires_at = CASE
+				WHEN `+balancesTable+`.next_expires_at IS NULL THEN EXCLUDED.next_expires_at
+				WHEN EXCLUDED.next_expires_at < `+balancesTable+`.next_expires_at THEN EXCLUDED.next_expires_at
+				ELSE `+balancesTable+`.next_expires_at
+			END,
+			updated_at = EXCLUDED.updated_at
+	`, input.UserID, normalizeAmountText(input.RewardAmount), expiresAt, at.UTC()); err != nil {
+		return fmt.Errorf("upsert red packet rain gift credit balance: %w", err)
 	}
 	return nil
 }
 
 func insertActivityBalanceHistory(ctx context.Context, exec sqlExecutor, input ClaimTransactionInput, claimID int64, at time.Time) error {
-	note := fmt.Sprintf("红包雨奖励：%s", strings.TrimSpace(input.ActivityTitle))
-	if strings.TrimSpace(input.ActivityTitle) == "" {
-		note = "红包雨奖励"
-	}
+	note := activityGiftCreditNote(input.ActivityTitle)
 	if _, err := exec.ExecContext(ctx, `
 		INSERT INTO redeem_codes (
 			code, type, value, status, used_by, used_at, notes, created_at, validity_days
@@ -372,6 +405,40 @@ func insertActivityBalanceHistory(ctx context.Context, exec sqlExecutor, input C
 	`, activityBalanceHistoryCode(input.ActivityID, input.RoundID, input.UserID, claimID, input.IdempotencyKey),
 		activityRewardRedeemType, normalizeAmountText(input.RewardAmount), "used", input.UserID, at.UTC(), note); err != nil {
 		return fmt.Errorf("insert red packet rain balance history: %w", err)
+	}
+	return nil
+}
+
+func activityGiftCreditNote(title string) string {
+	if strings.TrimSpace(title) == "" {
+		return "活动赠送余额"
+	}
+	return fmt.Sprintf("活动赠送余额：%s", strings.TrimSpace(title))
+}
+
+func giftCreditTableName(name string) (string, error) {
+	prefix := strings.TrimSpace(os.Getenv("CUSTOM_GIFT_CREDIT_TABLE_PREFIX"))
+	if err := validateGiftCreditIdentifierPart(prefix, true); err != nil {
+		return "", fmt.Errorf("gift credit table prefix is invalid: %w", err)
+	}
+	if err := validateGiftCreditIdentifierPart(name, false); err != nil {
+		return "", fmt.Errorf("gift credit table name is invalid: %w", err)
+	}
+	return prefix + name, nil
+}
+
+func validateGiftCreditIdentifierPart(value string, allowEmpty bool) error {
+	if value == "" {
+		if allowEmpty {
+			return nil
+		}
+		return errors.New("identifier is required")
+	}
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' {
+			continue
+		}
+		return errors.New("identifier may only contain letters, digits or underscores")
 	}
 	return nil
 }

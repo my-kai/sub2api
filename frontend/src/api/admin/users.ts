@@ -44,6 +44,11 @@ export interface AdminBoundAuthIdentity {
   channel?: AdminBoundAuthIdentityChannel | null
 }
 
+export interface UpdateUserBalanceOptions {
+  credit_type: 'balance' | 'gift'
+  gift_validity_days?: number
+}
+
 /**
  * List all users with pagination
  * @param page - Page number (default: 1)
@@ -163,12 +168,15 @@ export async function updateBalance(
   id: number,
   balance: number,
   operation: 'set' | 'add' | 'subtract' = 'set',
-  notes?: string
+  notes: string,
+  options: UpdateUserBalanceOptions
 ): Promise<AdminUser> {
   const { data } = await apiClient.post<AdminUser>(`/admin/users/${id}/balance`, {
     balance,
     operation,
-    notes: notes || ''
+    notes: notes || '',
+    credit_type: options.credit_type,
+    gift_validity_days: options.gift_validity_days
   })
   return data
 }

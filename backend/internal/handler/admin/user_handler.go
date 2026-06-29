@@ -77,9 +77,15 @@ type UpdateUserRequest struct {
 
 // UpdateBalanceRequest represents balance update request
 type UpdateBalanceRequest struct {
-	Balance   float64 `json:"balance" binding:"required,gt=0"`
-	Operation string  `json:"operation" binding:"required,oneof=set add subtract"`
-	Notes     string  `json:"notes"`
+	Balance          float64 `json:"balance" binding:"required,gt=0"`
+	Operation        string  `json:"operation" binding:"required,oneof=set add subtract"`
+	Notes            string  `json:"notes"`
+	CreditType       string  `json:"credit_type" binding:"required,oneof=balance gift"`
+	GiftValidityDays int     `json:"gift_validity_days" binding:"omitempty,min=0"`
+}
+
+type adminBalanceOptionsUpdater interface {
+	UpdateUserBalanceWithOptions(ctx context.Context, userID int64, input service.UpdateUserBalanceInput) (*service.User, error)
 }
 
 type BindUserAuthIdentityRequest struct {
@@ -358,7 +364,22 @@ func (h *UserHandler) UpdateBalance(c *gin.Context) {
 		Body:   req,
 	}
 	executeAdminIdempotentJSON(c, "admin.users.balance.update", idempotencyPayload, service.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
-		user, execErr := h.adminService.UpdateUserBalance(ctx, userID, req.Balance, req.Operation, req.Notes)
+		var user *service.User
+		var execErr error
+		if updater, ok := h.adminService.(adminBalanceOptionsUpdater); ok {
+			user, execErr = updater.UpdateUserBalanceWithOptions(ctx, userID, service.UpdateUserBalanceInput{
+				Balance:          req.Balance,
+				Operation:        req.Operation,
+				Notes:            req.Notes,
+				CreditType:       req.CreditType,
+				GiftValidityDays: req.GiftValidityDays,
+			})
+		} else {
+			if strings.TrimSpace(req.CreditType) == "gift" {
+				return nil, errors.New("gift credit service is not configured")
+			}
+			user, execErr = h.adminService.UpdateUserBalance(ctx, userID, req.Balance, req.Operation, req.Notes)
+		}
 		if execErr != nil {
 			return nil, execErr
 		}

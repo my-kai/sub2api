@@ -42,6 +42,7 @@
         <Input v-model="form.max_single_reward" label="单次最高奖励" :disabled="locked || saving" required />
         <Input v-model="form.base_unit_amount" label="基础奖励金额" :disabled="locked || saving" required />
         <Input v-model="form.probability_step" label="概率步长" :disabled="locked || saving" required />
+        <Input v-model="form.gift_validity_days" type="number" label="赠送余额有效天数" :disabled="locked || saving" required />
       </div>
     </section>
   </form>

@@ -176,7 +176,7 @@
             <div v-if="promoValidation.valid" class="mt-2 flex items-center gap-2 rounded-lg bg-green-50 px-3 py-2 dark:bg-green-900/20">
               <Icon name="gift" size="sm" class="text-green-600 dark:text-green-400" />
               <span class="text-sm text-green-700 dark:text-green-400">
-                {{ t('auth.promoCodeValid', { amount: promoValidation.bonusAmount?.toFixed(2) }) }}
+                {{ promoValidMessage }}
               </span>
             </div>
           </transition>
@@ -380,6 +380,8 @@ const promoValidation = reactive({
   valid: false,
   invalid: false,
   bonusAmount: null as number | null,
+  creditType: 'balance' as 'balance' | 'gift',
+  giftValidityDays: null as number | null,
   message: ''
 })
 let promoValidateTimeout: ReturnType<typeof setTimeout> | null = null
@@ -417,6 +419,23 @@ const validationToastMessage = computed(() =>
   errors.turnstile ||
   ''
 )
+
+const promoValidMessage = computed(() => {
+  if (promoValidation.bonusAmount === null) {
+    return ''
+  }
+  const amount = promoValidation.bonusAmount.toFixed(2)
+  if (promoValidation.creditType === 'gift') {
+    if (promoValidation.giftValidityDays === null) {
+      return ''
+    }
+    return t('auth.promoCodeValidGift', {
+      amount,
+      days: promoValidation.giftValidityDays
+    })
+  }
+  return t('auth.promoCodeValidBalance', { amount })
+})
 
 const showOAuthLogin = computed(
   () =>
@@ -585,6 +604,8 @@ function handlePromoCodeInput(): void {
   promoValidation.valid = false
   promoValidation.invalid = false
   promoValidation.bonusAmount = null
+  promoValidation.creditType = 'balance'
+  promoValidation.giftValidityDays = null
   promoValidation.message = ''
 
   if (!code) {
@@ -611,14 +632,33 @@ async function validatePromoCodeDebounced(code: string): Promise<void> {
     const result = await validatePromoCode(code)
 
     if (result.valid) {
+      const creditType = result.credit_type === 'gift' ? 'gift' : result.credit_type === 'balance' ? 'balance' : null
+      const bonusAmount = typeof result.bonus_amount === 'number' ? result.bonus_amount : null
+      const giftValidityDays = typeof result.gift_validity_days === 'number' ? result.gift_validity_days : null
+      const giftValidityInvalid =
+        creditType === 'gift' &&
+        (giftValidityDays === null || !Number.isInteger(giftValidityDays) || giftValidityDays <= 0)
+      if (creditType === null || bonusAmount === null || giftValidityInvalid) {
+        promoValidation.valid = false
+        promoValidation.invalid = true
+        promoValidation.bonusAmount = null
+        promoValidation.creditType = 'balance'
+        promoValidation.giftValidityDays = null
+        promoValidation.message = t('auth.promoCodeInvalid')
+        return
+      }
       promoValidation.valid = true
       promoValidation.invalid = false
-      promoValidation.bonusAmount = result.bonus_amount || 0
+      promoValidation.bonusAmount = bonusAmount
+      promoValidation.creditType = creditType
+      promoValidation.giftValidityDays = giftValidityDays
       promoValidation.message = ''
     } else {
       promoValidation.valid = false
       promoValidation.invalid = true
       promoValidation.bonusAmount = null
+      promoValidation.creditType = 'balance'
+      promoValidation.giftValidityDays = null
       // 根据错误码显示对应的翻译
       promoValidation.message = getPromoErrorMessage(result.error_code)
     }
@@ -626,6 +666,8 @@ async function validatePromoCodeDebounced(code: string): Promise<void> {
     console.error('Failed to validate promo code:', error)
     promoValidation.valid = false
     promoValidation.invalid = true
+    promoValidation.creditType = 'balance'
+    promoValidation.giftValidityDays = null
     promoValidation.message = t('auth.promoCodeInvalid')
   } finally {
     promoValidating.value = false
@@ -644,6 +686,8 @@ function getPromoErrorMessage(errorCode?: string): string {
       return t('auth.promoCodeMaxUsed')
     case 'PROMO_CODE_ALREADY_USED':
       return t('auth.promoCodeAlreadyUsed')
+    case 'PROMO_GIFT_VALIDITY_REQUIRED':
+      return t('auth.promoGiftValidityRequired')
     default:
       return t('auth.promoCodeInvalid')
   }

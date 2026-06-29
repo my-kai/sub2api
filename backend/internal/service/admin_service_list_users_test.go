@@ -121,6 +121,33 @@ func (s *userGroupRateRepoStubForListUsers) DeleteByUserID(_ context.Context, us
 	panic("unexpected DeleteByUserID call")
 }
 
+type giftBalanceBatchReaderStub struct {
+	singleCalls []int64
+	batchCalls  [][]int64
+	balances    map[int64]GiftCreditBalance
+	err         error
+}
+
+func (s *giftBalanceBatchReaderStub) GetUserGiftCreditBalance(ctx context.Context, userID int64) (GiftCreditBalance, error) {
+	s.singleCalls = append(s.singleCalls, userID)
+	if s.err != nil {
+		return GiftCreditBalance{}, s.err
+	}
+	return s.balances[userID], nil
+}
+
+func (s *giftBalanceBatchReaderStub) GetUsersGiftCreditBalance(ctx context.Context, userIDs []int64) (map[int64]GiftCreditBalance, error) {
+	s.batchCalls = append(s.batchCalls, append([]int64(nil), userIDs...))
+	if s.err != nil {
+		return nil, s.err
+	}
+	result := make(map[int64]GiftCreditBalance, len(userIDs))
+	for _, userID := range userIDs {
+		result[userID] = s.balances[userID]
+	}
+	return result, nil
+}
+
 func TestAdminService_ListUsers_BatchRateFallbackToSingle(t *testing.T) {
 	userRepo := &userRepoStubForListUsers{
 		users: []User{
@@ -182,4 +209,34 @@ func TestAdminService_ListUsers_PopulatesLastUsedAt(t *testing.T) {
 	require.Len(t, users, 1)
 	require.NotNil(t, users[0].LastUsedAt)
 	require.WithinDuration(t, lastUsed, *users[0].LastUsedAt, time.Second)
+}
+
+func TestAdminService_ListUsers_LoadsGiftBalanceInBatch(t *testing.T) {
+	userRepo := &userRepoStubForListUsers{
+		users: []User{
+			{ID: 101, Balance: 1},
+			{ID: 202, Balance: 2},
+		},
+	}
+	giftReader := &giftBalanceBatchReaderStub{
+		balances: map[int64]GiftCreditBalance{
+			101: {UserID: 101, GiftBalance: 3},
+			202: {UserID: 202, GiftBalance: 4},
+		},
+	}
+	svc := &adminServiceImpl{
+		userRepo:                userRepo,
+		giftCreditBalanceReader: giftReader,
+	}
+
+	users, total, err := svc.ListUsers(context.Background(), 1, 20, UserListFilters{}, "", "")
+	require.NoError(t, err)
+	require.Equal(t, int64(2), total)
+	require.Len(t, users, 2)
+	require.Equal(t, [][]int64{{101, 202}}, giftReader.batchCalls)
+	require.Empty(t, giftReader.singleCalls)
+	require.Equal(t, 3.0, users[0].GiftBalance)
+	require.Equal(t, 4.0, users[0].AvailableBalance)
+	require.Equal(t, 4.0, users[1].GiftBalance)
+	require.Equal(t, 6.0, users[1].AvailableBalance)
 }

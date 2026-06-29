@@ -196,19 +196,20 @@ type RateLimitCacheInvalidator interface {
 }
 
 type APIKeyService struct {
-	apiKeyRepo            APIKeyRepository
-	userRepo              UserRepository
-	groupRepo             GroupRepository
-	userSubRepo           UserSubscriptionRepository
-	userGroupRateRepo     UserGroupRateRepository
-	cache                 APIKeyCache
-	rateLimitCacheInvalid RateLimitCacheInvalidator // optional: invalidate Redis rate limit cache
-	cfg                   *config.Config
-	authCacheL1           *ristretto.Cache
-	authCfg               apiKeyAuthCacheConfig
-	authGroup             singleflight.Group
-	lastUsedTouchL1       sync.Map // keyID -> nextAllowedAt(time.Time)
-	lastUsedTouchSF       singleflight.Group
+	apiKeyRepo              APIKeyRepository
+	userRepo                UserRepository
+	groupRepo               GroupRepository
+	userSubRepo             UserSubscriptionRepository
+	userGroupRateRepo       UserGroupRateRepository
+	cache                   APIKeyCache
+	rateLimitCacheInvalid   RateLimitCacheInvalidator // optional: invalidate Redis rate limit cache
+	giftCreditBalanceReader GiftCreditBalanceReader
+	cfg                     *config.Config
+	authCacheL1             *ristretto.Cache
+	authCfg                 apiKeyAuthCacheConfig
+	authGroup               singleflight.Group
+	lastUsedTouchL1         sync.Map // keyID -> nextAllowedAt(time.Time)
+	lastUsedTouchSF         singleflight.Group
 }
 
 // NewAPIKeyService 创建API Key服务实例
@@ -238,6 +239,11 @@ func NewAPIKeyService(
 // Called after construction (e.g. in wire) to avoid circular dependencies.
 func (s *APIKeyService) SetRateLimitCacheInvalidator(inv RateLimitCacheInvalidator) {
 	s.rateLimitCacheInvalid = inv
+}
+
+// SetGiftCreditBalanceReader wires the O(1) gift-credit aggregate reader for auth snapshots.
+func (s *APIKeyService) SetGiftCreditBalanceReader(reader GiftCreditBalanceReader) {
+	s.giftCreditBalanceReader = reader
 }
 
 func (s *APIKeyService) compileAPIKeyIPRules(apiKey *APIKey) {

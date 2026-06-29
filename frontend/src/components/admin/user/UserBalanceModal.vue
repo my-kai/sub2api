@@ -12,6 +12,14 @@
           <button v-if="operation === 'subtract'" type="button" @click="fillAllBalance" class="btn btn-secondary whitespace-nowrap">{{ t('admin.users.withdrawAll') }}</button>
         </div>
       </div>
+      <div v-if="operation === 'add'">
+        <label class="input-label">{{ t('admin.users.creditType') }}</label>
+        <Select v-model="form.creditType" :options="creditTypeOptions" />
+      </div>
+      <div v-if="operation === 'add' && form.creditType === 'gift'">
+        <label class="input-label">{{ t('admin.users.giftValidityDays') }}</label>
+        <input v-model.number="form.giftValidityDays" type="number" min="1" required class="input" />
+      </div>
       <div><label class="input-label">{{ t('admin.users.notes') }}</label><textarea v-model="form.notes" rows="3" class="input"></textarea></div>
       <div v-if="form.amount > 0" class="rounded-xl border border-blue-200 bg-blue-50 p-4 dark:border-blue-800 dark:bg-blue-950"><div class="flex items-center justify-between text-sm"><span class="text-gray-700 dark:text-gray-300">{{ t('admin.users.newBalance') }}:</span><span class="font-bold text-gray-900 dark:text-gray-100">${{ formatBalance(calculateNewBalance()) }}</span></div></div>
     </form>
@@ -31,12 +39,17 @@ import { useAppStore } from '@/stores/app'
 import { adminAPI } from '@/api/admin'
 import type { AdminUser } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import Select from '@/components/common/Select.vue'
 
 const props = defineProps<{ show: boolean, user: AdminUser | null, operation: 'add' | 'subtract' }>()
 const emit = defineEmits(['close', 'success']); const { t } = useI18n(); const appStore = useAppStore()
 
-const submitting = ref(false); const form = reactive({ amount: 0, notes: '' })
-watch(() => props.show, (v) => { if(v) { form.amount = 0; form.notes = '' } })
+const submitting = ref(false); const form = reactive({ amount: 0, notes: '', creditType: 'balance' as 'balance' | 'gift', giftValidityDays: null as number | null })
+const creditTypeOptions = [
+  { value: 'balance', label: t('admin.users.creditTypeBalance') },
+  { value: 'gift', label: t('admin.users.creditTypeGift') }
+]
+watch(() => props.show, (v) => { if(v) { form.amount = 0; form.notes = ''; form.creditType = 'balance'; form.giftValidityDays = null } })
 
 // 格式化余额：显示完整精度，去除尾部多余的0
 const formatBalance = (value: number) => {
@@ -59,7 +72,7 @@ const fillAllBalance = () => {
 
 const calculateNewBalance = () => {
   if (!props.user) return 0
-  const result = props.operation === 'add' ? props.user.balance + form.amount : props.user.balance - form.amount
+  const result = props.operation === 'add' && form.creditType === 'gift' ? props.user.balance : props.operation === 'add' ? props.user.balance + form.amount : props.user.balance - form.amount
   // 避免浮点数精度问题导致的 -0.00 显示
   return Math.abs(result) < 1e-10 ? 0 : result
 }
@@ -74,13 +87,25 @@ const handleBalanceSubmit = async () => {
     appStore.showError(t('admin.users.insufficientBalance'))
     return
   }
+  if (props.operation === 'add' && form.creditType === 'gift' && !isPositiveGiftValidityDays(form.giftValidityDays)) {
+    appStore.showError(t('admin.users.giftValidityDaysRequired'))
+    return
+  }
   submitting.value = true
   try {
-    await adminAPI.users.updateBalance(props.user.id, form.amount, props.operation, form.notes)
+    await adminAPI.users.updateBalance(props.user.id, form.amount, props.operation, form.notes, {
+      credit_type: props.operation === 'add' ? form.creditType : 'balance',
+      gift_validity_days: props.operation === 'add' && form.creditType === 'gift' ? form.giftValidityDays! : 0
+    })
     appStore.showSuccess(t('common.success')); emit('success'); emit('close')
   } catch (e: any) {
     console.error('Failed to update balance:', e)
     appStore.showError(e.response?.data?.detail || t('common.error'))
   } finally { submitting.value = false }
+}
+
+const isPositiveGiftValidityDays = (value: unknown): value is number => {
+  // 赠送余额有效期必须由管理员显式填写，不能用默认天数代替配置。
+  return typeof value === 'number' && Number.isInteger(value) && value > 0
 }
 </script>

@@ -63,6 +63,7 @@ export interface RedPacketRainConfig {
   round_interval_seconds: number
   per_user_round_cap: MoneyString
   per_user_total_cap: MoneyString
+  gift_validity_days: number
 }
 
 /**

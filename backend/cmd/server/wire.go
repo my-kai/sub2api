@@ -14,6 +14,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	customactivityruntime "github.com/Wei-Shaw/sub2api/internal/custom/activity/runtime"
 	customcallbackauth "github.com/Wei-Shaw/sub2api/internal/custom/callbackauth"
+	customgiftcreditruntime "github.com/Wei-Shaw/sub2api/internal/custom/giftcredit/runtime"
 	customoauthapp "github.com/Wei-Shaw/sub2api/internal/custom/oauthapp"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/payment"
@@ -44,6 +45,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 		handler.ProviderSet,
 		customactivityruntime.ProvideBundleWithMainDeps,
 		customcallbackauth.ProvideBundle,
+		customgiftcreditruntime.ProvideBundleFromEnv,
 		customoauthapp.ProvideBundle,
 
 		// Server layer ProviderSet

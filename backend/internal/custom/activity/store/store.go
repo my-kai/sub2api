@@ -217,9 +217,9 @@ func (s *Store) UpsertRedPacketRainConfig(ctx context.Context, cfg types.RedPack
 		INSERT INTO `+s.table("custom_red_packet_rain_configs")+` (
 			activity_id, round_count, round_duration_seconds, round_interval_seconds,
 			total_budget, per_user_round_cap, per_user_total_cap,
-			base_unit_amount, max_single_reward, probability_step, created_at, updated_at
+			base_unit_amount, max_single_reward, probability_step, gift_validity_days, created_at, updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5::decimal, $6::decimal, $7::decimal, $8::decimal, $9::decimal, $10::decimal, $11, $11
+			$1, $2, $3, $4, $5::decimal, $6::decimal, $7::decimal, $8::decimal, $9::decimal, $10::decimal, $11, $12, $12
 		)
 		ON CONFLICT (activity_id) DO UPDATE SET
 			round_count = EXCLUDED.round_count,
@@ -231,10 +231,12 @@ func (s *Store) UpsertRedPacketRainConfig(ctx context.Context, cfg types.RedPack
 			base_unit_amount = EXCLUDED.base_unit_amount,
 			max_single_reward = EXCLUDED.max_single_reward,
 			probability_step = EXCLUDED.probability_step,
+			gift_validity_days = EXCLUDED.gift_validity_days,
 			updated_at = EXCLUDED.updated_at
 		RETURNING `+configColumns()+`
 	`, cfg.ActivityID, cfg.RoundCount, cfg.RoundDurationSeconds, cfg.RoundIntervalSeconds,
-		cfg.TotalBudget, cfg.PerUserRoundCap, cfg.PerUserTotalCap, cfg.BaseUnitAmount, cfg.MaxSingleReward, cfg.ProbabilityStep, now)
+		cfg.TotalBudget, cfg.PerUserRoundCap, cfg.PerUserTotalCap, cfg.BaseUnitAmount, cfg.MaxSingleReward, cfg.ProbabilityStep,
+		cfg.GiftValidityDays, now)
 	stored, err := scanConfig(row)
 	if err != nil {
 		return types.RedPacketRainConfig{}, fmt.Errorf("upsert red packet rain config: %w", err)

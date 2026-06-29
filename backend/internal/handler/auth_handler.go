@@ -444,10 +444,12 @@ type ValidatePromoCodeRequest struct {
 
 // ValidatePromoCodeResponse 验证优惠码响应
 type ValidatePromoCodeResponse struct {
-	Valid       bool    `json:"valid"`
-	BonusAmount float64 `json:"bonus_amount,omitempty"`
-	ErrorCode   string  `json:"error_code,omitempty"`
-	Message     string  `json:"message,omitempty"`
+	Valid            bool    `json:"valid"`
+	BonusAmount      float64 `json:"bonus_amount,omitempty"`
+	CreditType       string  `json:"credit_type,omitempty"`
+	GiftValidityDays int     `json:"gift_validity_days,omitempty"`
+	ErrorCode        string  `json:"error_code,omitempty"`
+	Message          string  `json:"message,omitempty"`
 }
 
 // ValidatePromoCode 验证优惠码（公开接口，注册前调用）
@@ -483,6 +485,8 @@ func (h *AuthHandler) ValidatePromoCode(c *gin.Context) {
 			errorCode = "PROMO_CODE_MAX_USED"
 		case service.ErrPromoCodeAlreadyUsed:
 			errorCode = "PROMO_CODE_ALREADY_USED"
+		case service.ErrPromoGiftValidityRequired:
+			errorCode = "PROMO_GIFT_VALIDITY_REQUIRED"
 		}
 
 		response.Success(c, ValidatePromoCodeResponse{
@@ -501,8 +505,10 @@ func (h *AuthHandler) ValidatePromoCode(c *gin.Context) {
 	}
 
 	response.Success(c, ValidatePromoCodeResponse{
-		Valid:       true,
-		BonusAmount: promoCode.BonusAmount,
+		Valid:            true,
+		BonusAmount:      promoCode.BonusAmount,
+		CreditType:       promoCode.CreditType,
+		GiftValidityDays: promoCode.GiftValidityDays,
 	})
 }
 

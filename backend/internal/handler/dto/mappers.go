@@ -18,6 +18,8 @@ func UserFromServiceShallow(u *service.User) *User {
 		Username:                   u.Username,
 		Role:                       u.Role,
 		Balance:                    u.Balance,
+		GiftBalance:                u.GiftBalance,
+		AvailableBalance:           userAvailableBalanceFromService(u),
 		Concurrency:                u.Concurrency,
 		Status:                     u.Status,
 		AllowedGroups:              u.AllowedGroups,
@@ -32,6 +34,13 @@ func UserFromServiceShallow(u *service.User) *User {
 		RPMLimit:                   u.RPMLimit,
 		DeletedAt:                  u.DeletedAt,
 	}
+}
+
+func userAvailableBalanceFromService(u *service.User) float64 {
+	if u == nil {
+		return 0
+	}
+	return u.AvailableBalance
 }
 
 func UserFromService(u *service.User) *User {
@@ -783,16 +792,18 @@ func PromoCodeFromService(pc *service.PromoCode) *PromoCode {
 		return nil
 	}
 	return &PromoCode{
-		ID:          pc.ID,
-		Code:        pc.Code,
-		BonusAmount: pc.BonusAmount,
-		MaxUses:     pc.MaxUses,
-		UsedCount:   pc.UsedCount,
-		Status:      pc.Status,
-		ExpiresAt:   pc.ExpiresAt,
-		Notes:       pc.Notes,
-		CreatedAt:   pc.CreatedAt,
-		UpdatedAt:   pc.UpdatedAt,
+		ID:               pc.ID,
+		Code:             pc.Code,
+		BonusAmount:      pc.BonusAmount,
+		MaxUses:          pc.MaxUses,
+		UsedCount:        pc.UsedCount,
+		Status:           pc.Status,
+		ExpiresAt:        pc.ExpiresAt,
+		Notes:            pc.Notes,
+		CreditType:       pc.CreditType,
+		GiftValidityDays: pc.GiftValidityDays,
+		CreatedAt:        pc.CreatedAt,
+		UpdatedAt:        pc.UpdatedAt,
 	}
 }
 

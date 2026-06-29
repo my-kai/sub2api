@@ -8560,6 +8560,13 @@ func buildUsageBillingCommand(requestID string, usageLog *UsageLog, p *postUsage
 	return cmd
 }
 
+func requiresUnifiedBalanceBilling(p *postUsageBillingParams, cmd *UsageBillingCommand) bool {
+	if cmd != nil && cmd.BalanceCost > 0 {
+		return true
+	}
+	return p != nil && p.Cost != nil && !p.IsSubscriptionBill && p.Cost.ActualCost > 0
+}
+
 func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog, p *postUsageBillingParams, deps *billingDeps, repo UsageBillingRepository) (bool, error) {
 	if p == nil || deps == nil {
 		return false, nil
@@ -8567,6 +8574,9 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 
 	cmd := buildUsageBillingCommand(requestID, usageLog, p)
 	if cmd == nil || cmd.RequestID == "" || repo == nil {
+		if requiresUnifiedBalanceBilling(p, cmd) {
+			return false, fmt.Errorf("%w: usage billing repository is required for balance billing", ErrBillingServiceUnavailable)
+		}
 		postUsageBilling(ctx, p, deps)
 		return true, nil
 	}
@@ -8604,7 +8614,13 @@ func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, de
 			deps.billingCacheService.QueueUpdateSubscriptionUsage(p.User.ID, *p.APIKey.GroupID, p.Cost.ActualCost)
 		}
 	} else if p.Cost.ActualCost > 0 && p.User != nil {
-		deps.billingCacheService.QueueDeductBalance(p.User.ID, p.Cost.ActualCost)
+		balanceDeducted := usageBillingBalanceDeducted(p, result)
+		if balanceDeducted > 0 {
+			deps.billingCacheService.QueueDeductBalance(p.User.ID, balanceDeducted)
+		} else if result != nil && result.GiftDeducted > 0 {
+			// 赠送余额全额覆盖时普通余额未变，只需要让可用余额下次重新加载。
+			_ = deps.billingCacheService.InvalidateUserBalance(ctx, p.User.ID)
+		}
 	}
 
 	if p.Cost.ActualCost > 0 && p.APIKey != nil && p.APIKey.HasRateLimits() {
@@ -8662,10 +8678,14 @@ func notifyBalanceLow(p *postUsageBillingParams, deps *billingDeps, result *Usag
 			slog.Error("panic in notifyBalanceLow", "recover", r)
 		}
 	}()
-	if p.IsSubscriptionBill || p.Cost.ActualCost <= 0 || p.User == nil || deps.balanceNotifyService == nil {
+	balanceDeducted := p.Cost.ActualCost
+	if result != nil {
+		balanceDeducted = usageBillingBalanceDeducted(p, result)
+	}
+	if p.IsSubscriptionBill || balanceDeducted <= 0 || p.User == nil || deps.balanceNotifyService == nil {
 		slog.Debug("notifyBalanceLow: skipped",
 			"is_subscription", p.IsSubscriptionBill,
-			"actual_cost", p.Cost.ActualCost,
+			"balance_deducted", balanceDeducted,
 			"user_nil", p.User == nil,
 			"service_nil", deps.balanceNotifyService == nil,
 		)
@@ -8676,22 +8696,38 @@ func notifyBalanceLow(p *postUsageBillingParams, deps *billingDeps, result *Usag
 	slog.Debug("notifyBalanceLow: calling CheckBalanceAfterDeduction",
 		"user_id", p.User.ID,
 		"old_balance", oldBalance,
-		"cost", p.Cost.ActualCost,
+		"cost", balanceDeducted,
 		"notify_enabled", p.User.BalanceNotifyEnabled,
 		"threshold", p.User.BalanceNotifyThreshold,
 		"result_has_new_balance", result != nil && result.NewBalance != nil,
 	)
-	deps.balanceNotifyService.CheckBalanceAfterDeduction(context.Background(), p.User, oldBalance, p.Cost.ActualCost)
+	deps.balanceNotifyService.CheckBalanceAfterDeduction(context.Background(), p.User, oldBalance, balanceDeducted)
 }
 
 // resolveOldBalance returns the pre-deduction balance.
 // Prefers the DB transaction result (newBalance + cost) over snapshot.
 func resolveOldBalance(p *postUsageBillingParams, result *UsageBillingApplyResult) float64 {
+	balanceDeducted := usageBillingBalanceDeducted(p, result)
 	if result != nil && result.NewBalance != nil {
-		return *result.NewBalance + p.Cost.ActualCost
+		return *result.NewBalance + balanceDeducted
 	}
 	// Legacy fallback: snapshot balance from request context
 	return p.User.Balance
+}
+
+func usageBillingBalanceDeducted(p *postUsageBillingParams, result *UsageBillingApplyResult) float64 {
+	if p == nil || p.Cost == nil {
+		return 0
+	}
+	if result == nil {
+		return p.Cost.ActualCost
+	}
+	if result.BalanceDeducted != 0 || result.GiftDeducted != 0 || result.NewBalance != nil {
+		return result.BalanceDeducted
+	}
+	// Older tests and degraded stubs only set Applied=true. Treat them as the
+	// pre-gift-credit path so existing ordinary-balance semantics stay intact.
+	return p.Cost.ActualCost
 }
 
 // notifyAccountQuota sends account quota threshold notification after increment.

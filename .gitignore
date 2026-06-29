@@ -127,11 +127,13 @@ AGENTS.md
 backend/cmd/server/server
 deploy/docker-compose.override.yml
 .gocache/
+.gitnexus/
 vite.config.js
 docs/*
 !docs/custom/
 docs/custom/*
 !docs/custom/announcements.md
+!docs/custom/gift-credit.md
 !docs/PAYMENT.md
 !docs/PAYMENT_CN.md
 !docs/ADMIN_PAYMENT_INTEGRATION_API.md

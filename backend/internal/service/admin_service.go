@@ -17,6 +17,7 @@ import (
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/authidentity"
 	"github.com/Wei-Shaw/sub2api/ent/authidentitychannel"
+	gifttypes "github.com/Wei-Shaw/sub2api/internal/custom/giftcredit/types"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -536,27 +537,103 @@ const (
 )
 
 var ErrRPMStatusUnavailable = infraerrors.New(http.StatusNotImplemented, "RPM_STATUS_UNAVAILABLE", "RPM cache not available")
+var ErrAdminBalanceCreditTypeRequired = infraerrors.BadRequest("ADMIN_BALANCE_CREDIT_TYPE_REQUIRED", "balance update credit type must be balance or gift")
+var ErrAdminGiftValidityRequired = infraerrors.BadRequest("ADMIN_GIFT_VALIDITY_REQUIRED", "gift credit validity days must be greater than 0")
 
 // adminServiceImpl implements AdminService
 type adminServiceImpl struct {
-	userRepo             UserRepository
-	groupRepo            GroupRepository
-	accountRepo          AccountRepository
-	proxyRepo            ProxyRepository
-	apiKeyRepo           APIKeyRepository
-	redeemCodeRepo       RedeemCodeRepository
-	userGroupRateRepo    UserGroupRateRepository
-	userRPMCache         UserRPMCache
-	billingCacheService  *BillingCacheService
-	proxyProber          ProxyExitInfoProber
-	proxyLatencyCache    ProxyLatencyCache
-	authCacheInvalidator APIKeyAuthCacheInvalidator
-	entClient            *dbent.Client // 用于开启数据库事务
-	settingService       *SettingService
-	defaultSubAssigner   DefaultSubscriptionAssigner
-	userSubRepo          UserSubscriptionRepository
-	privacyClientFactory PrivacyClientFactory
-	runtimeBlocker       AccountRuntimeBlocker
+	userRepo                UserRepository
+	groupRepo               GroupRepository
+	accountRepo             AccountRepository
+	proxyRepo               ProxyRepository
+	apiKeyRepo              APIKeyRepository
+	redeemCodeRepo          RedeemCodeRepository
+	userGroupRateRepo       UserGroupRateRepository
+	userRPMCache            UserRPMCache
+	billingCacheService     *BillingCacheService
+	proxyProber             ProxyExitInfoProber
+	proxyLatencyCache       ProxyLatencyCache
+	authCacheInvalidator    APIKeyAuthCacheInvalidator
+	entClient               *dbent.Client // 用于开启数据库事务
+	settingService          *SettingService
+	defaultSubAssigner      DefaultSubscriptionAssigner
+	userSubRepo             UserSubscriptionRepository
+	privacyClientFactory    PrivacyClientFactory
+	runtimeBlocker          AccountRuntimeBlocker
+	giftCreditBalanceReader GiftCreditBalanceReader
+	giftCreditGrantCreator  GiftCreditGrantCreator
+}
+
+// SetAdminGiftCreditBalanceReader wires optional gift-credit aggregate loading into AdminService.
+func SetAdminGiftCreditBalanceReader(adminService AdminService, reader GiftCreditBalanceReader) {
+	if svc, ok := adminService.(*adminServiceImpl); ok {
+		svc.giftCreditBalanceReader = reader
+		if creator, ok := reader.(GiftCreditGrantCreator); ok {
+			svc.giftCreditGrantCreator = creator
+		}
+	}
+}
+
+// GiftCreditGrantCreator is the narrow dependency needed by admin and promo issuance flows.
+type GiftCreditGrantCreator interface {
+	CreateGrant(ctx context.Context, input gifttypes.CreateGrantInput) (gifttypes.Grant, error)
+}
+
+// GiftCreditBatchBalanceReader reads gift-credit aggregates for a user page in one backend call.
+type GiftCreditBatchBalanceReader interface {
+	GetUsersGiftCreditBalance(ctx context.Context, userIDs []int64) (map[int64]GiftCreditBalance, error)
+}
+
+// SetAdminGiftCreditGrantCreator wires custom gift-credit grant creation without changing NewAdminService.
+func SetAdminGiftCreditGrantCreator(adminService AdminService, creator GiftCreditGrantCreator) {
+	if svc, ok := adminService.(*adminServiceImpl); ok {
+		svc.giftCreditGrantCreator = creator
+	}
+}
+
+const (
+	creditTypeBalance = "balance"
+	creditTypeGift    = "gift"
+)
+
+func normalizeCreditType(value string) string {
+	if strings.TrimSpace(value) == creditTypeGift {
+		return creditTypeGift
+	}
+	return creditTypeBalance
+}
+
+func normalizeGiftValidityDays(days int) int {
+	return days
+}
+
+func validateGiftValidityDays(days int) error {
+	if days <= 0 {
+		return ErrAdminGiftValidityRequired
+	}
+	return nil
+}
+
+func normalizeAdminRequiredCreditType(value string) (string, error) {
+	switch strings.TrimSpace(value) {
+	case creditTypeBalance:
+		return creditTypeBalance, nil
+	case creditTypeGift:
+		return creditTypeGift, nil
+	default:
+		return "", ErrAdminBalanceCreditTypeRequired
+	}
+}
+
+func formatGiftAmount(amount float64) string {
+	return strconv.FormatFloat(amount, 'f', 8, 64)
+}
+
+func defaultGiftNote(note string, fallback string) string {
+	if strings.TrimSpace(note) == "" {
+		return fallback
+	}
+	return strings.TrimSpace(note)
 }
 
 type userGroupRateBatchReader interface {
@@ -649,6 +726,9 @@ func (s *adminServiceImpl) ListUsers(ctx context.Context, page, pageSize int, fi
 			s.loadUserGroupRatesOneByOne(ctx, users)
 		}
 	}
+	if err := s.hydrateUsersGiftCreditBalance(ctx, users); err != nil {
+		return nil, 0, err
+	}
 	return users, result.Total, nil
 }
 
@@ -686,11 +766,65 @@ func (s *adminServiceImpl) GetUser(ctx context.Context, id int64) (*User, error)
 			user.GroupRates = rates
 		}
 	}
+	if err := s.hydrateUserGiftCreditBalance(ctx, user); err != nil {
+		return nil, err
+	}
 	return user, nil
 }
 
 func (s *adminServiceImpl) GetUserIncludeDeleted(ctx context.Context, id int64) (*User, error) {
-	return s.userRepo.GetByIDIncludeDeleted(ctx, id)
+	user, err := s.userRepo.GetByIDIncludeDeleted(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.hydrateUserGiftCreditBalance(ctx, user); err != nil {
+		return nil, err
+	}
+	return user, nil
+}
+
+func (s *adminServiceImpl) hydrateUsersGiftCreditBalance(ctx context.Context, users []User) error {
+	if s == nil || s.giftCreditBalanceReader == nil {
+		for i := range users {
+			users[i].AvailableBalance = users[i].Balance
+		}
+		return nil
+	}
+	batchReader, ok := s.giftCreditBalanceReader.(GiftCreditBatchBalanceReader)
+	if !ok {
+		return fmt.Errorf("gift credit batch balance reader is not configured")
+	}
+	userIDs := make([]int64, 0, len(users))
+	for i := range users {
+		userIDs = append(userIDs, users[i].ID)
+	}
+	balances, err := batchReader.GetUsersGiftCreditBalance(ctx, userIDs)
+	if err != nil {
+		return fmt.Errorf("get users gift credit balance: %w", err)
+	}
+	for i := range users {
+		gift := balances[users[i].ID]
+		users[i].GiftBalance = gift.GiftBalance
+		users[i].AvailableBalance = users[i].Balance + gift.GiftBalance
+	}
+	return nil
+}
+
+func (s *adminServiceImpl) hydrateUserGiftCreditBalance(ctx context.Context, user *User) error {
+	if s == nil || user == nil {
+		return nil
+	}
+	if s.giftCreditBalanceReader == nil {
+		user.AvailableBalance = user.Balance
+		return nil
+	}
+	gift, err := s.giftCreditBalanceReader.GetUserGiftCreditBalance(ctx, user.ID)
+	if err != nil {
+		return fmt.Errorf("get user gift credit balance: %w", err)
+	}
+	user.GiftBalance = gift.GiftBalance
+	user.AvailableBalance = user.Balance + gift.GiftBalance
+	return nil
 }
 
 func (s *adminServiceImpl) CreateUser(ctx context.Context, input *CreateUserInput) (*User, error) {
@@ -985,6 +1119,36 @@ func (s *adminServiceImpl) BatchUpdateConcurrency(ctx context.Context, userIDs [
 }
 
 func (s *adminServiceImpl) UpdateUserBalance(ctx context.Context, userID int64, balance float64, operation string, notes string) (*User, error) {
+	return s.UpdateUserBalanceWithOptions(ctx, userID, UpdateUserBalanceInput{
+		Balance:    balance,
+		Operation:  operation,
+		Notes:      notes,
+		CreditType: creditTypeBalance,
+	})
+}
+
+// UpdateUserBalanceInput carries optional credit-type controls for admin balance adjustments.
+type UpdateUserBalanceInput struct {
+	Balance          float64
+	Operation        string
+	Notes            string
+	CreditType       string
+	GiftValidityDays int
+}
+
+// UpdateUserBalanceWithOptions keeps the legacy ordinary-balance path intact and adds gift grants for deposits.
+func (s *adminServiceImpl) UpdateUserBalanceWithOptions(ctx context.Context, userID int64, input UpdateUserBalanceInput) (*User, error) {
+	creditType, err := normalizeAdminRequiredCreditType(input.CreditType)
+	if err != nil {
+		return nil, err
+	}
+	if creditType == creditTypeGift {
+		return s.createAdminGiftCredit(ctx, userID, input)
+	}
+	return s.updateOrdinaryUserBalance(ctx, userID, input.Balance, input.Operation, input.Notes)
+}
+
+func (s *adminServiceImpl) updateOrdinaryUserBalance(ctx context.Context, userID int64, balance float64, operation string, notes string) (*User, error) {
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -1047,6 +1211,84 @@ func (s *adminServiceImpl) UpdateUserBalance(ctx context.Context, userID int64, 
 	}
 
 	return user, nil
+}
+
+func (s *adminServiceImpl) createAdminGiftCredit(ctx context.Context, userID int64, input UpdateUserBalanceInput) (*User, error) {
+	if input.Operation != "add" {
+		return nil, fmt.Errorf("gift credit only supports add operation")
+	}
+	if input.Balance <= 0 {
+		return nil, fmt.Errorf("gift credit amount must be greater than 0")
+	}
+	if s.giftCreditGrantCreator == nil {
+		return nil, fmt.Errorf("gift credit service is not configured")
+	}
+	user, err := s.userRepo.GetByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now().UTC()
+	validityDays := normalizeGiftValidityDays(input.GiftValidityDays)
+	if err := validateGiftValidityDays(validityDays); err != nil {
+		return nil, err
+	}
+	sourceID, err := GenerateRedeemCode()
+	if err != nil {
+		return nil, fmt.Errorf("generate admin gift credit source id: %w", err)
+	}
+	if _, err := s.giftCreditGrantCreator.CreateGrant(ctx, gifttypes.CreateGrantInput{
+		UserID:     userID,
+		SourceType: gifttypes.SourceAdminGrant,
+		SourceID:   "admin:" + sourceID,
+		Amount:     formatGiftAmount(input.Balance),
+		ExpiresAt:  now.AddDate(0, 0, validityDays),
+		Note:       defaultGiftNote(input.Notes, "管理员赠送余额"),
+		CreatedAt:  now,
+	}); err != nil {
+		return nil, fmt.Errorf("create admin gift credit grant: %w", err)
+	}
+
+	if s.authCacheInvalidator != nil {
+		s.authCacheInvalidator.InvalidateAuthCacheByUserID(ctx, userID)
+	}
+	s.invalidateUserBalanceCacheAsync(userID)
+	if err := s.createBalanceAdjustmentRecord(ctx, user.ID, sourceID, RedeemTypeAdminGiftCredit, input.Balance, input.Notes, now); err != nil {
+		logger.LegacyPrintf("service.admin", "failed to create gift credit adjustment redeem code: %v", err)
+	}
+	if err := s.hydrateUserGiftCreditBalance(ctx, user); err != nil {
+		return nil, err
+	}
+	return user, nil
+}
+
+func (s *adminServiceImpl) createBalanceAdjustmentRecord(ctx context.Context, userID int64, code string, codeType string, value float64, notes string, usedAt time.Time) error {
+	if s.redeemCodeRepo == nil {
+		return nil
+	}
+	adjustmentRecord := &RedeemCode{
+		Code:   code,
+		Type:   codeType,
+		Value:  value,
+		Status: StatusUsed,
+		UsedBy: &userID,
+		Notes:  notes,
+		UsedAt: &usedAt,
+	}
+	return s.redeemCodeRepo.Create(ctx, adjustmentRecord)
+}
+
+func (s *adminServiceImpl) invalidateUserBalanceCacheAsync(userID int64) {
+	if s == nil || s.billingCacheService == nil {
+		return
+	}
+	go func() {
+		cacheCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := s.billingCacheService.InvalidateUserBalance(cacheCtx, userID); err != nil {
+			logger.LegacyPrintf("service.admin", "invalidate user balance cache failed: user_id=%d err=%v", userID, err)
+		}
+	}()
 }
 
 func (s *adminServiceImpl) GetUserAPIKeys(ctx context.Context, userID int64, page, pageSize int, sortBy, sortOrder string) ([]APIKey, int64, error) {

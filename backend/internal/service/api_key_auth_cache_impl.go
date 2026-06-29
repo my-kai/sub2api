@@ -14,7 +14,7 @@ import (
 	"github.com/dgraph-io/ristretto"
 )
 
-const apiKeyAuthSnapshotVersion = 12 // v12: include exclusive group authorization fields
+const apiKeyAuthSnapshotVersion = 14 // v14: include gift expiry so auth cache TTL never outlives gift balance
 
 type apiKeyAuthCacheConfig struct {
 	l1Size        int
@@ -113,7 +113,11 @@ func (s *APIKeyService) getAuthCacheEntry(ctx context.Context, cacheKey string) 
 	if s.authCacheL1 != nil {
 		if val, ok := s.authCacheL1.Get(cacheKey); ok {
 			if entry, ok := val.(*APIKeyAuthCacheEntry); ok {
-				return entry, true
+				if authCacheEntryTTL(entry, s.authCfg.l1TTL, time.Now()) <= 0 {
+					s.authCacheL1.Del(cacheKey)
+				} else {
+					return entry, true
+				}
 			}
 		}
 	}
@@ -124,6 +128,10 @@ func (s *APIKeyService) getAuthCacheEntry(ctx context.Context, cacheKey string) 
 	if err != nil {
 		return nil, false
 	}
+	if authCacheEntryTTL(entry, s.authCfg.l2TTL, time.Now()) <= 0 {
+		_ = s.cache.DeleteAuthCache(ctx, cacheKey)
+		return nil, false
+	}
 	s.setAuthCacheL1(cacheKey, entry)
 	return entry, true
 }
@@ -132,9 +140,12 @@ func (s *APIKeyService) setAuthCacheL1(cacheKey string, entry *APIKeyAuthCacheEn
 	if s.authCacheL1 == nil || entry == nil {
 		return
 	}
-	ttl := s.authCfg.l1TTL
+	ttl := authCacheEntryTTL(entry, s.authCfg.l1TTL, time.Now())
 	if entry.NotFound && s.authCfg.negativeTTL > 0 && s.authCfg.negativeTTL < ttl {
 		ttl = s.authCfg.negativeTTL
+	}
+	if ttl <= 0 {
+		return
 	}
 	ttl = s.authCfg.jitterTTL(ttl)
 	_ = s.authCacheL1.SetWithTTL(cacheKey, entry, 1, ttl)
@@ -146,6 +157,13 @@ func (s *APIKeyService) setAuthCacheEntry(ctx context.Context, cacheKey string, 
 	}
 	s.setAuthCacheL1(cacheKey, entry)
 	if s.cache == nil || !s.authCfg.l2Enabled() {
+		return
+	}
+	ttl = authCacheEntryTTL(entry, ttl, time.Now())
+	if s.authCfg.l2TTL <= 0 {
+		return
+	}
+	if ttl <= 0 {
 		return
 	}
 	_ = s.cache.SetAuthCache(ctx, cacheKey, entry, s.authCfg.jitterTTL(ttl))
@@ -176,7 +194,10 @@ func (s *APIKeyService) loadAuthCacheEntry(ctx context.Context, key, cacheKey st
 		return nil, fmt.Errorf("get api key: %w", err)
 	}
 	apiKey.Key = key
-	snapshot := s.snapshotFromAPIKey(ctx, apiKey)
+	snapshot, err := s.snapshotFromAPIKey(ctx, apiKey)
+	if err != nil {
+		return nil, err
+	}
 	if snapshot == nil {
 		return nil, fmt.Errorf("get api key: %w", ErrAPIKeyNotFound)
 	}
@@ -201,9 +222,12 @@ func (s *APIKeyService) applyAuthCacheEntry(key string, entry *APIKeyAuthCacheEn
 	return s.snapshotToAPIKey(key, entry.Snapshot), true, nil
 }
 
-func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) *APIKeyAuthSnapshot {
+func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) (*APIKeyAuthSnapshot, error) {
 	if apiKey == nil || apiKey.User == nil {
-		return nil
+		return nil, nil
+	}
+	if err := s.hydrateAuthSnapshotGiftCredit(ctx, apiKey.User); err != nil {
+		return nil, err
 	}
 	snapshot := &APIKeyAuthSnapshot{
 		Version:     apiKeyAuthSnapshotVersion,
@@ -225,6 +249,9 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 			Status:                     apiKey.User.Status,
 			Role:                       apiKey.User.Role,
 			Balance:                    apiKey.User.Balance,
+			GiftBalance:                apiKey.User.GiftBalance,
+			GiftBalanceNextExpiresAt:   apiKey.User.GiftBalanceNextExpiresAt,
+			AvailableBalance:           resolvedUserAvailableBalance(apiKey.User),
 			Concurrency:                apiKey.User.Concurrency,
 			AllowedGroups:              apiKey.User.AllowedGroups,
 			Email:                      apiKey.User.Email,
@@ -278,7 +305,24 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 			RPMLimit:                        apiKey.Group.RPMLimit,
 		}
 	}
-	return snapshot
+	return snapshot, nil
+}
+
+func (s *APIKeyService) hydrateAuthSnapshotGiftCredit(ctx context.Context, user *User) error {
+	if s == nil || user == nil || s.giftCreditBalanceReader == nil {
+		if user != nil {
+			user.AvailableBalance = resolvedUserAvailableBalance(user)
+		}
+		return nil
+	}
+	gift, err := s.giftCreditBalanceReader.GetUserGiftCreditBalance(ctx, user.ID)
+	if err != nil {
+		return fmt.Errorf("get user gift credit balance: %w", err)
+	}
+	user.GiftBalance = gift.GiftBalance
+	user.GiftBalanceNextExpiresAt = gift.NextExpiresAt
+	user.AvailableBalance = user.Balance + gift.GiftBalance
+	return nil
 }
 
 func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapshot) *APIKey {
@@ -305,6 +349,9 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 			Status:                     snapshot.User.Status,
 			Role:                       snapshot.User.Role,
 			Balance:                    snapshot.User.Balance,
+			GiftBalance:                snapshot.User.GiftBalance,
+			GiftBalanceNextExpiresAt:   snapshot.User.GiftBalanceNextExpiresAt,
+			AvailableBalance:           snapshot.User.AvailableBalance,
 			Concurrency:                snapshot.User.Concurrency,
 			AllowedGroups:              snapshot.User.AllowedGroups,
 			Email:                      snapshot.User.Email,
@@ -353,4 +400,21 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 	}
 	s.compileAPIKeyIPRules(apiKey)
 	return apiKey
+}
+
+func authCacheEntryTTL(entry *APIKeyAuthCacheEntry, base time.Duration, now time.Time) time.Duration {
+	if entry == nil || base <= 0 {
+		return base
+	}
+	if entry.NotFound || entry.Snapshot == nil || entry.Snapshot.User.GiftBalanceNextExpiresAt == nil {
+		return base
+	}
+	untilGiftExpiry := entry.Snapshot.User.GiftBalanceNextExpiresAt.Sub(now)
+	if untilGiftExpiry <= 0 {
+		return 0
+	}
+	if untilGiftExpiry < base {
+		return untilGiftExpiry
+	}
+	return base
 }

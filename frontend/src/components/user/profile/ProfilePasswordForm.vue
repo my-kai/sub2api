@@ -16,11 +16,11 @@
           </p>
         </div>
         <div>
-          <label for="old_password" class="input-label">
+          <label :for="fieldIds.oldPassword" class="input-label">
             {{ t('profile.currentPassword') }}
           </label>
           <input
-            id="old_password"
+            :id="fieldIds.oldPassword"
             v-model="form.old_password"
             type="password"
             required
@@ -30,11 +30,11 @@
         </div>
 
         <div>
-          <label for="new_password" class="input-label">
+          <label :for="fieldIds.newPassword" class="input-label">
             {{ t('profile.newPassword') }}
           </label>
           <input
-            id="new_password"
+            :id="fieldIds.newPassword"
             v-model="form.new_password"
             type="password"
             required
@@ -47,11 +47,11 @@
         </div>
 
         <div>
-          <label for="confirm_password" class="input-label">
+          <label :for="fieldIds.confirmPassword" class="input-label">
             {{ t('profile.confirmNewPassword') }}
           </label>
           <input
-            id="confirm_password"
+            :id="fieldIds.confirmPassword"
             v-model="form.confirm_password"
             type="password"
             required
@@ -71,7 +71,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { userAPI } from '@/api'
@@ -80,9 +80,14 @@ const { t } = useI18n()
 const appStore = useAppStore()
 const props = withDefaults(defineProps<{
   embedded?: boolean
+  idPrefix?: string
 }>(), {
   embedded: false,
+  idPrefix: '',
 })
+const emit = defineEmits<{
+  (event: 'success'): void
+}>()
 
 const loading = ref(false)
 const form = ref({
@@ -90,6 +95,13 @@ const form = ref({
   new_password: '',
   confirm_password: ''
 })
+
+// 同一个页面可能同时存在资料页表单和弹窗表单，字段 ID 必须可区分，避免 label 指向错实例。
+const fieldIds = computed(() => ({
+  oldPassword: props.idPrefix ? `${props.idPrefix}-old-password` : 'old_password',
+  newPassword: props.idPrefix ? `${props.idPrefix}-new-password` : 'new_password',
+  confirmPassword: props.idPrefix ? `${props.idPrefix}-confirm-password` : 'confirm_password',
+}))
 
 const handleChangePassword = async () => {
   if (form.value.new_password !== form.value.confirm_password) {
@@ -107,6 +119,7 @@ const handleChangePassword = async () => {
     await userAPI.changePassword(form.value.old_password, form.value.new_password)
     form.value = { old_password: '', new_password: '', confirm_password: '' }
     appStore.showSuccess(t('profile.passwordChangeSuccess'))
+    emit('success')
   } catch (error: any) {
     appStore.showError(error.response?.data?.detail || t('profile.passwordChangeFailed'))
   } finally {

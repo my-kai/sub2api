@@ -496,6 +496,9 @@ func ProvideAPIKeyService(
 ) *APIKeyService {
 	svc := NewAPIKeyService(apiKeyRepo, userRepo, groupRepo, userSubRepo, userGroupRateRepo, cache, cfg)
 	svc.SetRateLimitCacheInvalidator(billingCacheService)
+	if billingCacheService != nil {
+		svc.SetGiftCreditBalanceReader(billingCacheService.giftCreditBalanceReader)
+	}
 	return svc
 }
 

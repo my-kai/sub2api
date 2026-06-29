@@ -215,12 +215,13 @@ type ChangePasswordRequest struct {
 
 // UserService 用户服务
 type UserService struct {
-	userRepo             UserRepository
-	settingRepo          SettingRepository
-	authCacheInvalidator APIKeyAuthCacheInvalidator
-	billingCache         BillingCache
-	lastActiveTouchL1    sync.Map
-	lastActiveTouchSF    singleflight.Group
+	userRepo                UserRepository
+	settingRepo             SettingRepository
+	authCacheInvalidator    APIKeyAuthCacheInvalidator
+	billingCache            BillingCache
+	giftCreditBalanceReader GiftCreditBalanceReader
+	lastActiveTouchL1       sync.Map
+	lastActiveTouchSF       singleflight.Group
 }
 
 // NewUserService 创建用户服务实例
@@ -231,6 +232,11 @@ func NewUserService(userRepo UserRepository, settingRepo SettingRepository, auth
 		authCacheInvalidator: authCacheInvalidator,
 		billingCache:         billingCache,
 	}
+}
+
+// SetGiftCreditBalanceReader wires the optional custom gift-credit aggregate reader.
+func (s *UserService) SetGiftCreditBalanceReader(reader GiftCreditBalanceReader) {
+	s.giftCreditBalanceReader = reader
 }
 
 // GetFirstAdmin 获取首个管理员用户（用于 Admin API Key 认证）
@@ -251,6 +257,9 @@ func (s *UserService) GetProfile(ctx context.Context, userID int64) (*User, erro
 	normalizeLoadedUserTokenVersion(user)
 	if err := s.hydrateUserAvatar(ctx, user); err != nil {
 		return nil, fmt.Errorf("get user avatar: %w", err)
+	}
+	if err := s.hydrateGiftCreditBalance(ctx, user); err != nil {
+		return nil, err
 	}
 	return user, nil
 }
@@ -970,7 +979,27 @@ func (s *UserService) GetByID(ctx context.Context, id int64) (*User, error) {
 	if err := s.hydrateUserAvatar(ctx, user); err != nil {
 		return nil, fmt.Errorf("get user avatar: %w", err)
 	}
+	if err := s.hydrateGiftCreditBalance(ctx, user); err != nil {
+		return nil, err
+	}
 	return user, nil
+}
+
+func (s *UserService) hydrateGiftCreditBalance(ctx context.Context, user *User) error {
+	if s == nil || user == nil {
+		return nil
+	}
+	if s.giftCreditBalanceReader == nil {
+		user.AvailableBalance = user.Balance
+		return nil
+	}
+	gift, err := s.giftCreditBalanceReader.GetUserGiftCreditBalance(ctx, user.ID)
+	if err != nil {
+		return fmt.Errorf("get user gift credit balance: %w", err)
+	}
+	user.GiftBalance = gift.GiftBalance
+	user.AvailableBalance = user.Balance + gift.GiftBalance
+	return nil
 }
 
 func normalizeLoadedUserTokenVersion(user *User) {

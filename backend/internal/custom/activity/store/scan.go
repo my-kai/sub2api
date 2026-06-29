@@ -32,7 +32,7 @@ func prefixedActivityColumns(alias string) string {
 func configColumns() string {
 	return `activity_id, round_count, round_duration_seconds, round_interval_seconds,
 		total_budget::text, per_user_round_cap::text, per_user_total_cap::text,
-		base_unit_amount::text, max_single_reward::text, probability_step::text,
+		base_unit_amount::text, max_single_reward::text, probability_step::text, gift_validity_days,
 		created_at, updated_at`
 }
 
@@ -145,6 +145,7 @@ func scanConfig(row interface{ Scan(dest ...any) error }) (types.RedPacketRainCo
 		&cfg.BaseUnitAmount,
 		&cfg.MaxSingleReward,
 		&cfg.ProbabilityStep,
+		&cfg.GiftValidityDays,
 		&cfg.CreatedAt,
 		&cfg.UpdatedAt,
 	); err != nil {

@@ -181,13 +181,14 @@ func (s *Service) ClaimRedPacketRain(ctx context.Context, input ClaimInput) (typ
 	}
 
 	txResult, err := s.store.SettleClaim(ctx, store.ClaimTransactionInput{
-		ActivityID:     input.ActivityID,
-		RoundID:        input.RoundID,
-		UserID:         input.UserID,
-		HitCount:       input.HitCount,
-		IdempotencyKey: input.IdempotencyKey,
-		ActivityTitle:  activity.Title,
-		CreatedAt:      now,
+		ActivityID:       input.ActivityID,
+		RoundID:          input.RoundID,
+		UserID:           input.UserID,
+		HitCount:         input.HitCount,
+		IdempotencyKey:   input.IdempotencyKey,
+		ActivityTitle:    activity.Title,
+		CreatedAt:        now,
+		GiftValidityDays: cfg.GiftValidityDays,
 	}, func(summary types.ClaimSummary) (store.ClaimRewardDecision, error) {
 		reward, capMessage, calcErr := s.calculateReward(ctx, cfg, input.HitCount, summary)
 		if calcErr != nil {

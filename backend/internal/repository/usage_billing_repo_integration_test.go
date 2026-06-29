@@ -5,6 +5,7 @@ package repository
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	giftruntime "github.com/Wei-Shaw/sub2api/internal/custom/giftcredit/runtime"
+	gifttypes "github.com/Wei-Shaw/sub2api/internal/custom/giftcredit/types"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
@@ -78,6 +81,141 @@ func TestUsageBillingRepositoryApply_DeduplicatesBalanceBilling(t *testing.T) {
 	var dedupCount int
 	require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM usage_billing_dedup WHERE request_id = $1 AND api_key_id = $2", requestID, apiKey.ID).Scan(&dedupCount))
 	require.Equal(t, 1, dedupCount)
+}
+
+func TestUsageBillingRepositoryApply_GiftCreditBalanceScenarios(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	bundle, err := giftruntime.ProvideBundle(ctx, integrationDB, giftruntime.ProviderOptions{})
+	require.NoError(t, err)
+	giftStore := bundle.Store
+	repo := NewUsageBillingRepositoryWithGiftCredit(client, integrationDB, giftStore)
+
+	type scenario struct {
+		name             string
+		startBalance     float64
+		giftAmount       string
+		cost             float64
+		wantBalance      float64
+		wantGiftBalance  float64
+		wantBalanceDebit float64
+		wantGiftDebit    float64
+	}
+
+	cases := []scenario{
+		{
+			name:             "no balance and no gift balance",
+			startBalance:     0,
+			cost:             1.25,
+			wantBalance:      -1.25,
+			wantGiftBalance:  0,
+			wantBalanceDebit: 1.25,
+			wantGiftDebit:    0,
+		},
+		{
+			name:             "has balance and no gift balance",
+			startBalance:     10,
+			cost:             1.25,
+			wantBalance:      8.75,
+			wantGiftBalance:  0,
+			wantBalanceDebit: 1.25,
+			wantGiftDebit:    0,
+		},
+		{
+			name:             "no balance and has gift balance",
+			startBalance:     0,
+			giftAmount:       "2.00",
+			cost:             1.25,
+			wantBalance:      0,
+			wantGiftBalance:  0.75,
+			wantBalanceDebit: 0,
+			wantGiftDebit:    1.25,
+		},
+		{
+			name:             "no balance and has partial gift balance",
+			startBalance:     0,
+			giftAmount:       "0.75",
+			cost:             1.25,
+			wantBalance:      -0.50,
+			wantGiftBalance:  0,
+			wantBalanceDebit: 0.50,
+			wantGiftDebit:    0.75,
+		},
+		{
+			name:             "has balance and has partial gift balance",
+			startBalance:     10,
+			giftAmount:       "0.75",
+			cost:             1.25,
+			wantBalance:      9.50,
+			wantGiftBalance:  0,
+			wantBalanceDebit: 0.50,
+			wantGiftDebit:    0.75,
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			user := mustCreateUser(t, client, &service.User{
+				Email:        fmt.Sprintf("gift-billing-%s-%d@example.com", strings.ReplaceAll(tt.name, " ", "-"), time.Now().UnixNano()),
+				PasswordHash: "hash",
+				Balance:      tt.startBalance,
+			})
+			apiKey := mustCreateApiKey(t, client, &service.APIKey{
+				UserID: user.ID,
+				Key:    "sk-gift-billing-" + uuid.NewString(),
+				Name:   "gift-billing",
+			})
+			if tt.giftAmount != "" {
+				_, err := giftStore.CreateGrant(ctx, gifttypes.CreateGrantInput{
+					UserID:     user.ID,
+					SourceType: gifttypes.SourceAdminGrant,
+					SourceID:   "test:" + uuid.NewString(),
+					Amount:     tt.giftAmount,
+					ExpiresAt:  time.Now().UTC().Add(time.Hour),
+					CreatedAt:  time.Now().UTC(),
+				})
+				require.NoError(t, err)
+			}
+
+			result, err := repo.Apply(ctx, &service.UsageBillingCommand{
+				RequestID:   uuid.NewString(),
+				APIKeyID:    apiKey.ID,
+				UserID:      user.ID,
+				BalanceCost: tt.cost,
+			})
+			require.NoError(t, err)
+			require.True(t, result.Applied)
+			require.InDelta(t, tt.wantGiftDebit, result.GiftDeducted, 0.000001)
+			require.InDelta(t, tt.wantBalanceDebit, result.BalanceDeducted, 0.000001)
+
+			var balance float64
+			require.NoError(t, integrationDB.QueryRowContext(ctx, "SELECT balance FROM users WHERE id = $1", user.ID).Scan(&balance))
+			require.InDelta(t, tt.wantBalance, balance, 0.000001)
+
+			giftBalance, err := giftStore.UserBalance(ctx, user.ID, time.Now().UTC())
+			require.NoError(t, err)
+			require.InDelta(t, tt.wantGiftBalance, parseGiftBalanceForTest(t, giftBalance.ActiveRemainingAmount), 0.000001)
+			assertGiftCreditGrantAmountsNonNegative(t, ctx, user.ID)
+		})
+	}
+}
+
+func assertGiftCreditGrantAmountsNonNegative(t *testing.T, ctx context.Context, userID int64) {
+	t.Helper()
+	var negativeCount int
+	require.NoError(t, integrationDB.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM custom_gift_credit_grants
+		WHERE user_id = $1 AND remaining_amount < 0
+	`, userID).Scan(&negativeCount))
+	require.Zero(t, negativeCount, "gift credit grant remaining_amount must never be negative")
+}
+
+func parseGiftBalanceForTest(t *testing.T, raw string) float64 {
+	t.Helper()
+	value, err := strconv.ParseFloat(raw, 64)
+	require.NoError(t, err)
+	return value
 }
 
 func TestUsageBillingRepositoryApply_DeduplicatesSubscriptionBilling(t *testing.T) {

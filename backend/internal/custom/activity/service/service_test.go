@@ -97,5 +97,6 @@ func testConfig() types.RedPacketRainConfig {
 		BaseUnitAmount:       "1.00000000",
 		MaxSingleReward:      "4.00000000",
 		ProbabilityStep:      "0.10000000",
+		GiftValidityDays:     30,
 	}
 }

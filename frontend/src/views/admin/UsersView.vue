@@ -413,8 +413,15 @@
                   class="font-medium text-gray-900 underline decoration-dashed decoration-gray-300 underline-offset-4 transition-colors hover:text-primary-600 dark:text-white dark:decoration-dark-500 dark:hover:text-primary-400"
                   @click="handleBalanceHistory(row)"
                 >
-                  ${{ value.toFixed(2) }}
+                  ${{ formatBalance(value) }}
                 </button>
+                <p
+                  v-if="row.gift_balance || row.available_balance"
+                  class="mt-0.5 text-xs text-gray-500 dark:text-gray-400"
+                >
+                  {{ t('admin.users.giftBalance') }} ${{ formatBalance(row.gift_balance) }}
+                  · {{ t('admin.users.availableBalance') }} ${{ formatBalance(row.available_balance) }}
+                </p>
                 <!-- Instant tooltip -->
                 <div class="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1.5 -translate-x-1/2 whitespace-nowrap rounded bg-gray-900 px-2 py-1 text-xs text-white opacity-0 shadow-lg transition-opacity duration-75 group-hover:opacity-100 dark:bg-dark-600">
                   {{ t('admin.users.balanceHistoryTip') }}
@@ -787,6 +794,13 @@ import UserBalanceHistoryModal from '@/components/admin/user/UserBalanceHistoryM
 import GroupReplaceModal from '@/components/admin/user/GroupReplaceModal.vue'
 
 const appStore = useAppStore()
+
+const balanceFormatter = new Intl.NumberFormat('en-US', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+})
+
+const formatBalance = (value?: number | null): string => balanceFormatter.format(value ?? 0)
 
 // Generate dynamic attribute columns from enabled definitions
 const attributeColumns = computed<Column[]>(() =>

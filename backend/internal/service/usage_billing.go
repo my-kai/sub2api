@@ -114,8 +114,13 @@ type AccountQuotaState struct {
 type UsageBillingApplyResult struct {
 	Applied              bool
 	APIKeyQuotaExhausted bool
-	NewBalance           *float64           // post-deduction balance (nil = no balance deduction)
-	QuotaState           *AccountQuotaState // post-increment quota state (nil = no quota increment)
+	// GiftDeducted is the part of BalanceCost consumed by expiring gift credit.
+	GiftDeducted float64
+	// BalanceDeducted is the part of BalanceCost still charged to users.balance.
+	BalanceDeducted float64
+	NewBalance      *float64 // post-deduction ordinary balance (nil = no ordinary balance deduction)
+	NewGiftBalance  *float64 // post-deduction gift balance (nil = no gift credit deduction)
+	QuotaState      *AccountQuotaState
 }
 
 type UsageBillingRepository interface {

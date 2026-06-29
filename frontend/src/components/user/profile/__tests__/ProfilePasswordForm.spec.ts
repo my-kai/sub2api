@@ -76,4 +76,23 @@ describe('ProfilePasswordForm', () => {
     expect(showErrorMock).toHaveBeenCalledWith('backend failure')
     expect(wrapper.find('.input-error-text').exists()).toBe(false)
   })
+
+  it('emits success after changing password without owning navigation', async () => {
+    changePasswordMock.mockResolvedValue({ message: 'ok' })
+
+    const wrapper = mount(ProfilePasswordForm, {
+      props: {
+        idPrefix: 'dialog-password'
+      }
+    })
+
+    await wrapper.get('#dialog-password-old-password').setValue('old-password')
+    await wrapper.get('#dialog-password-new-password').setValue('new-password')
+    await wrapper.get('#dialog-password-confirm-password').setValue('new-password')
+    await wrapper.get('form').trigger('submit.prevent')
+
+    expect(changePasswordMock).toHaveBeenCalledWith('old-password', 'new-password')
+    expect(showSuccessMock).toHaveBeenCalledWith('Password changed successfully')
+    expect(wrapper.emitted('success')).toHaveLength(1)
+  })
 })

@@ -78,6 +78,7 @@ const (
 	cacheWriteTimeout         = 2 * time.Second // 单个写入操作超时
 	cacheWriteDropLogInterval = 5 * time.Second // 丢弃日志节流间隔
 	balanceLoadTimeout        = 3 * time.Second
+	availableBalanceCacheTTL  = 30 * time.Second
 )
 
 // cacheWriteTask 缓存写入任务
@@ -99,15 +100,16 @@ type apiKeyRateLimitLoader interface {
 // BillingCacheService 计费缓存服务
 // 负责余额和订阅数据的缓存管理，提供高性能的计费资格检查
 type BillingCacheService struct {
-	cache                 BillingCache
-	userRepo              UserRepository
-	subRepo               UserSubscriptionRepository
-	apiKeyRateLimitLoader apiKeyRateLimitLoader
-	userRPMCache          UserRPMCache
-	userGroupRateRepo     UserGroupRateRepository
-	cfg                   *config.Config
-	circuitBreaker        *billingCircuitBreaker
-	userPlatformQuotaRepo UserPlatformQuotaRepository
+	cache                   BillingCache
+	userRepo                UserRepository
+	subRepo                 UserSubscriptionRepository
+	apiKeyRateLimitLoader   apiKeyRateLimitLoader
+	userRPMCache            UserRPMCache
+	userGroupRateRepo       UserGroupRateRepository
+	cfg                     *config.Config
+	circuitBreaker          *billingCircuitBreaker
+	userPlatformQuotaRepo   UserPlatformQuotaRepository
+	giftCreditBalanceReader GiftCreditBalanceReader
 
 	cacheWriteChan     chan cacheWriteTask
 	cacheWriteWg       sync.WaitGroup
@@ -116,11 +118,24 @@ type BillingCacheService struct {
 	stopped            atomic.Bool
 	balanceLoadSF      singleflight.Group
 	quotaLoadSF        singleflight.Group
+	availableLoadSF    singleflight.Group
 	// 丢弃日志节流计数器（减少高负载下日志噪音）
 	cacheWriteDropFullCount     uint64
 	cacheWriteDropFullLastLog   int64
 	cacheWriteDropClosedCount   uint64
 	cacheWriteDropClosedLastLog int64
+}
+
+// GiftCreditBalanceReader reads O(1) gift-credit aggregates for billing checks.
+type GiftCreditBalanceReader interface {
+	GetUserGiftCreditBalance(ctx context.Context, userID int64) (GiftCreditBalance, error)
+}
+
+// GiftCreditBalance is the main-service view of custom gift-credit aggregates.
+type GiftCreditBalance struct {
+	UserID        int64
+	GiftBalance   float64
+	NextExpiresAt *time.Time
 }
 
 // NewBillingCacheService 创建计费缓存服务
@@ -147,6 +162,11 @@ func NewBillingCacheService(
 	svc.circuitBreaker = newBillingCircuitBreaker(cfg.Billing.CircuitBreaker)
 	svc.startCacheWriteWorkers()
 	return svc
+}
+
+// SetGiftCreditBalanceReader wires the optional custom gift-credit aggregate reader.
+func (s *BillingCacheService) SetGiftCreditBalanceReader(reader GiftCreditBalanceReader) {
+	s.giftCreditBalanceReader = reader
 }
 
 // Stop 关闭缓存写入工作池
@@ -352,6 +372,56 @@ func (s *BillingCacheService) getUserBalanceFromDB(ctx context.Context, userID i
 	return user.Balance, nil
 }
 
+// GetUserAvailableBalance returns ordinary balance plus unexpired gift credit.
+//
+// Gift credit is read from its aggregate table, not grant detail rows, so the
+// AI request eligibility path stays at one user-level lookup.
+func (s *BillingCacheService) GetUserAvailableBalance(ctx context.Context, userID int64) (float64, error) {
+	if s.cache != nil {
+		if balance, err := s.cache.GetUserAvailableBalance(ctx, userID); err == nil {
+			return balance, nil
+		}
+	}
+	value, err, _ := s.availableLoadSF.Do(strconv.FormatInt(userID, 10), func() (any, error) {
+		return s.loadUserAvailableBalance(ctx, userID)
+	})
+	if err != nil {
+		return 0, err
+	}
+	balance, ok := value.(float64)
+	if !ok {
+		return 0, fmt.Errorf("unexpected available balance type: %T", value)
+	}
+	return balance, nil
+}
+
+func (s *BillingCacheService) loadUserAvailableBalance(ctx context.Context, userID int64) (float64, error) {
+	balance, err := s.GetUserBalance(ctx, userID)
+	if err != nil {
+		return 0, err
+	}
+	if s.giftCreditBalanceReader == nil {
+		s.setAvailableBalanceCache(ctx, userID, balance, availableBalanceCacheTTL)
+		return balance, nil
+	}
+	gift, err := s.giftCreditBalanceReader.GetUserGiftCreditBalance(ctx, userID)
+	if err != nil {
+		return 0, fmt.Errorf("get user gift credit balance: %w", err)
+	}
+	available := balance + gift.GiftBalance
+	ttl := availableBalanceCacheTTL
+	if gift.NextExpiresAt != nil {
+		untilExpiry := time.Until(*gift.NextExpiresAt)
+		if untilExpiry <= 0 {
+			ttl = 0
+		} else if untilExpiry < ttl {
+			ttl = untilExpiry
+		}
+	}
+	s.setAvailableBalanceCache(ctx, userID, available, ttl)
+	return available, nil
+}
+
 // setBalanceCache 设置余额缓存
 func (s *BillingCacheService) setBalanceCache(ctx context.Context, userID int64, balance float64) {
 	if s.cache == nil {
@@ -375,6 +445,8 @@ func (s *BillingCacheService) QueueDeductBalance(userID int64, amount float64) {
 	if s.cache == nil {
 		return
 	}
+	// 可用余额包含赠送余额，扣费可能先扣赠送余额也可能扣普通余额；直接失效最稳妥。
+	_ = s.cache.InvalidateUserAvailableBalance(context.Background(), userID)
 	// 队列满时同步回退，避免关键扣减被静默丢弃。
 	if s.enqueueCacheWrite(cacheWriteTask{
 		kind:   cacheWriteDeductBalance,
@@ -399,7 +471,20 @@ func (s *BillingCacheService) InvalidateUserBalance(ctx context.Context, userID 
 		logger.LegacyPrintf("service.billing_cache", "Warning: invalidate balance cache failed for user %d: %v", userID, err)
 		return err
 	}
+	if err := s.cache.InvalidateUserAvailableBalance(ctx, userID); err != nil {
+		logger.LegacyPrintf("service.billing_cache", "Warning: invalidate available balance cache failed for user %d: %v", userID, err)
+		return err
+	}
 	return nil
+}
+
+func (s *BillingCacheService) setAvailableBalanceCache(ctx context.Context, userID int64, balance float64, ttl time.Duration) {
+	if s.cache == nil || ttl <= 0 {
+		return
+	}
+	if err := s.cache.SetUserAvailableBalance(ctx, userID, balance, ttl); err != nil {
+		logger.LegacyPrintf("service.billing_cache", "Warning: set available balance cache failed for user %d: %v", userID, err)
+	}
 }
 
 // ============================================
@@ -835,7 +920,7 @@ func (s *BillingCacheService) checkRPM(ctx context.Context, user *User, group *G
 
 // checkBalanceEligibility 检查余额模式资格
 func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, userID int64) error {
-	balance, err := s.GetUserBalance(ctx, userID)
+	balance, err := s.GetUserAvailableBalance(ctx, userID)
 	if err != nil {
 		if s.circuitBreaker != nil {
 			s.circuitBreaker.OnFailure(err)

@@ -445,6 +445,18 @@ func (s *billingCacheStub) InvalidateUserBalance(ctx context.Context, userID int
 	panic("unexpected InvalidateUserBalance call")
 }
 
+func (s *billingCacheStub) GetUserAvailableBalance(ctx context.Context, userID int64) (float64, error) {
+	panic("unexpected GetUserAvailableBalance call")
+}
+
+func (s *billingCacheStub) SetUserAvailableBalance(ctx context.Context, userID int64, balance float64, ttl time.Duration) error {
+	panic("unexpected SetUserAvailableBalance call")
+}
+
+func (s *billingCacheStub) InvalidateUserAvailableBalance(ctx context.Context, userID int64) error {
+	return nil
+}
+
 func (s *billingCacheStub) GetSubscriptionCache(ctx context.Context, userID, groupID int64) (*SubscriptionCacheData, error) {
 	panic("unexpected GetSubscriptionCache call")
 }

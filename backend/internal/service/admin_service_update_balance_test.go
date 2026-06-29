@@ -5,7 +5,9 @@ package service
 import (
 	"context"
 	"testing"
+	"time"
 
+	gifttypes "github.com/Wei-Shaw/sub2api/internal/custom/giftcredit/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -62,6 +64,26 @@ func (s *authCacheInvalidatorStub) InvalidateAuthCacheByGroupID(ctx context.Cont
 	s.groupIDs = append(s.groupIDs, groupID)
 }
 
+type giftCreditGrantCreatorStub struct {
+	inputs []gifttypes.CreateGrantInput
+}
+
+func (s *giftCreditGrantCreatorStub) CreateGrant(ctx context.Context, input gifttypes.CreateGrantInput) (gifttypes.Grant, error) {
+	s.inputs = append(s.inputs, input)
+	return gifttypes.Grant{
+		ID:              1,
+		UserID:          input.UserID,
+		SourceType:      input.SourceType,
+		SourceID:        input.SourceID,
+		OriginalAmount:  input.Amount,
+		RemainingAmount: input.Amount,
+		ExpiresAt:       input.ExpiresAt,
+		Status:          gifttypes.StatusActive,
+		CreatedAt:       input.CreatedAt,
+		UpdatedAt:       input.CreatedAt,
+	}, nil
+}
+
 func TestAdminService_UpdateUserBalance_InvalidatesAuthCache(t *testing.T) {
 	baseRepo := &userRepoStub{user: &User{ID: 7, Balance: 10}}
 	repo := &balanceUserRepoStub{userRepoStub: baseRepo}
@@ -94,4 +116,68 @@ func TestAdminService_UpdateUserBalance_NoChangeNoInvalidate(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, invalidator.userIDs)
 	require.Empty(t, redeemRepo.created)
+}
+
+func TestAdminService_UpdateUserBalanceGiftRequiresValidityDays(t *testing.T) {
+	baseRepo := &userRepoStub{user: &User{ID: 7, Balance: 10}}
+	repo := &balanceUserRepoStub{userRepoStub: baseRepo}
+	creator := &giftCreditGrantCreatorStub{}
+	svc := &adminServiceImpl{
+		userRepo:               repo,
+		giftCreditGrantCreator: creator,
+	}
+
+	_, err := svc.UpdateUserBalanceWithOptions(context.Background(), 7, UpdateUserBalanceInput{
+		Balance:    5,
+		Operation:  "add",
+		CreditType: "gift",
+	})
+	require.ErrorContains(t, err, "gift credit validity days must be greater than 0")
+	require.Empty(t, creator.inputs)
+}
+
+func TestAdminService_UpdateUserBalanceWithOptionsRequiresExplicitCreditType(t *testing.T) {
+	baseRepo := &userRepoStub{user: &User{ID: 7, Balance: 10}}
+	repo := &balanceUserRepoStub{userRepoStub: baseRepo}
+	svc := &adminServiceImpl{
+		userRepo: repo,
+	}
+
+	_, err := svc.UpdateUserBalanceWithOptions(context.Background(), 7, UpdateUserBalanceInput{
+		Balance:   5,
+		Operation: "add",
+	})
+	require.ErrorIs(t, err, ErrAdminBalanceCreditTypeRequired)
+	require.Empty(t, repo.updated)
+}
+
+func TestAdminService_UpdateUserBalanceGiftCreatesGrantWithExplicitValidity(t *testing.T) {
+	baseRepo := &userRepoStub{user: &User{ID: 7, Balance: 10}}
+	repo := &balanceUserRepoStub{userRepoStub: baseRepo}
+	redeemRepo := &balanceRedeemRepoStub{redeemRepoStub: &redeemRepoStub{}}
+	creator := &giftCreditGrantCreatorStub{}
+	invalidator := &authCacheInvalidatorStub{}
+	svc := &adminServiceImpl{
+		userRepo:               repo,
+		redeemCodeRepo:         redeemRepo,
+		giftCreditGrantCreator: creator,
+		authCacheInvalidator:   invalidator,
+	}
+
+	before := time.Now().UTC()
+	user, err := svc.UpdateUserBalanceWithOptions(context.Background(), 7, UpdateUserBalanceInput{
+		Balance:          5,
+		Operation:        "add",
+		CreditType:       "gift",
+		GiftValidityDays: 3,
+		Notes:            "manual gift",
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(7), user.ID)
+	require.Len(t, creator.inputs, 1)
+	require.Equal(t, gifttypes.SourceAdminGrant, creator.inputs[0].SourceType)
+	require.Equal(t, "5.00000000", creator.inputs[0].Amount)
+	require.WithinDuration(t, before.AddDate(0, 0, 3), creator.inputs[0].ExpiresAt, 2*time.Second)
+	require.Equal(t, []int64{7}, invalidator.userIDs)
+	require.Len(t, redeemRepo.created, 1)
 }

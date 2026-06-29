@@ -47,7 +47,8 @@
         <!-- Balance Display -->
         <div
           v-if="user"
-          class="hidden items-center gap-2 rounded-xl bg-primary-50 px-3 py-1.5 dark:bg-primary-900/20 sm:flex"
+          class="hidden items-center gap-3 rounded-xl bg-primary-50 px-3 py-1.5 dark:bg-primary-900/20 sm:flex"
+          :title="balanceSummaryTooltip"
         >
           <svg
             class="h-4 w-4 text-primary-600 dark:text-primary-400"
@@ -62,9 +63,21 @@
               d="M2.25 18.75a60.07 60.07 0 0115.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 013 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 00-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 01-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 003 15h-.75M15 10.5a3 3 0 11-6 0 3 3 0 016 0zm3 0h.008v.008H18V10.5zm-12 0h.008v.008H6V10.5z"
             />
           </svg>
-          <span class="text-sm font-semibold text-primary-700 dark:text-primary-300">
-            ${{ user.balance?.toFixed(2) || '0.00' }}
-          </span>
+          <div class="flex items-center gap-2">
+            <span
+              class="text-sm font-semibold text-primary-700 dark:text-primary-300"
+              :title="balanceTooltip"
+            >
+              ${{ formatCurrency(user.balance) }}
+            </span>
+            <div class="h-8 w-px bg-primary-200 dark:bg-primary-700/60"></div>
+            <span
+              class="text-sm font-semibold text-primary-700 dark:text-primary-300"
+              :title="giftBalanceTooltip"
+            >
+              ${{ formatCurrency(user.gift_balance) }}
+            </span>
+          </div>
         </div>
 
         <!-- User Dropdown -->
@@ -107,15 +120,38 @@
 
               <!-- Balance (mobile only) -->
               <div class="border-b border-gray-100 px-4 py-2 dark:border-dark-700 sm:hidden">
-                <div class="text-xs text-gray-500 dark:text-dark-400">
-                  {{ t('common.balance') }}
-                </div>
-                <div class="text-sm font-semibold text-primary-600 dark:text-primary-400">
-                  ${{ user.balance?.toFixed(2) || '0.00' }}
+                <div class="flex items-start justify-between gap-3">
+                  <div>
+                    <div class="text-xs text-gray-500 dark:text-dark-400" :title="balanceTooltip">
+                      {{ t('common.balance') }}
+                    </div>
+                    <div
+                      class="text-sm font-semibold text-primary-600 dark:text-primary-400"
+                      :title="balanceTooltip"
+                    >
+                      ${{ formatCurrency(user.balance) }}
+                    </div>
+                  </div>
+                  <div class="text-right">
+                    <div class="text-xs text-gray-500 dark:text-dark-400" :title="giftBalanceTooltip">
+                      {{ t('common.giftBalance') }}
+                    </div>
+                    <div
+                      class="text-sm font-semibold text-primary-600 dark:text-primary-400"
+                      :title="giftBalanceTooltip"
+                    >
+                      ${{ formatCurrency(user.gift_balance) }}
+                    </div>
+                  </div>
                 </div>
               </div>
 
               <div class="py-1">
+                <button type="button" @click="openPasswordDialog" class="dropdown-item w-full">
+                  <Icon name="lock" size="sm" />
+                  {{ t('profile.changePassword') }}
+                </button>
+
                 <router-link to="/profile" @click="closeDropdown" class="dropdown-item">
                   <Icon name="user" size="sm" />
                   {{ t('nav.profile') }}
@@ -209,6 +245,19 @@
         </div>
       </div>
     </div>
+
+    <BaseDialog
+      :show="passwordDialogOpen"
+      :title="t('profile.changePassword')"
+      width="normal"
+      @close="closePasswordDialog"
+    >
+      <ProfilePasswordForm
+        embedded
+        id-prefix="header-password-dialog"
+        @success="closePasswordDialog"
+      />
+    </BaseDialog>
   </header>
 </template>
 
@@ -218,10 +267,12 @@ import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAppStore, useAuthStore, useOnboardingStore } from '@/stores'
 import { useAdminSettingsStore } from '@/stores/adminSettings'
+import BaseDialog from '@/components/common/BaseDialog.vue'
 import LocaleSwitcher from '@/components/common/LocaleSwitcher.vue'
 import SubscriptionProgressMini from '@/components/common/SubscriptionProgressMini.vue'
 import AnnouncementBell from '@/components/common/AnnouncementBell.vue'
 import Icon from '@/components/icons/Icon.vue'
+import ProfilePasswordForm from '@/components/user/profile/ProfilePasswordForm.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -233,6 +284,7 @@ const onboardingStore = useOnboardingStore()
 
 const user = computed(() => authStore.user)
 const dropdownOpen = ref(false)
+const passwordDialogOpen = ref(false)
 const dropdownRef = ref<HTMLElement | null>(null)
 const contactInfo = computed(() => appStore.contactInfo)
 const docUrl = computed(() => appStore.docUrl)
@@ -286,6 +338,17 @@ const pageDescription = computed(() => {
   return (route.meta.description as string) || ''
 })
 
+function formatCurrency(value: number) {
+  return new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value)
+}
+
+const balanceTooltip = computed(() => user.value ? `${t('common.balance')}: $${formatCurrency(user.value.balance)}` : '')
+const giftBalanceTooltip = computed(() => user.value ? `${t('common.giftBalance')}: $${formatCurrency(user.value.gift_balance)}` : '')
+const balanceSummaryTooltip = computed(() => `${balanceTooltip.value} / ${giftBalanceTooltip.value}`)
+
 function toggleMobileSidebar() {
   appStore.toggleMobileSidebar()
 }
@@ -296,6 +359,15 @@ function toggleDropdown() {
 
 function closeDropdown() {
   dropdownOpen.value = false
+}
+
+function openPasswordDialog() {
+  closeDropdown()
+  passwordDialogOpen.value = true
+}
+
+function closePasswordDialog() {
+  passwordDialogOpen.value = false
 }
 
 async function handleLogout() {

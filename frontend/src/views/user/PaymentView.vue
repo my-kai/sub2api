@@ -35,7 +35,8 @@
             <div class="card p-5">
               <p class="text-xs font-medium text-gray-400 dark:text-gray-500">{{ t('payment.rechargeAccount') }}</p>
               <p class="mt-1 text-base font-semibold text-gray-900 dark:text-white">{{ user?.username || '' }}</p>
-              <p class="mt-0.5 text-sm font-medium text-green-600 dark:text-green-400">{{ t('payment.currentBalance') }}: {{ user?.balance?.toFixed(2) || '0.00' }}</p>
+              <p v-if="user" class="mt-0.5 text-sm font-medium text-green-600 dark:text-green-400">{{ t('payment.availableBalance') }}: {{ formatBalance(user.available_balance) }}</p>
+              <p v-if="user" class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{{ t('payment.currentBalance') }}: {{ formatBalance(user.balance) }} · {{ t('payment.giftBalance') }}: {{ formatBalance(user.gift_balance) }}</p>
             </div>
             <div v-if="enabledMethods.length === 0" class="card py-16 text-center">
               <p class="text-gray-500 dark:text-gray-400">{{ t('payment.notAvailable') }}</p>
@@ -542,6 +543,15 @@ const localeCode = computed(() => {
 
 function formatSelectedPaymentAmount(value: number): string {
   return formatPaymentAmount(value, selectedCurrency.value, localeCode.value)
+}
+
+const balanceFormatter = new Intl.NumberFormat('en-US', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+})
+
+function formatBalance(value: number): string {
+  return balanceFormatter.format(value)
 }
 
 const methodOptions = computed<PaymentMethodOption[]>(() =>

@@ -80,6 +80,22 @@
             </span>
           </template>
 
+          <template #cell-credit_type="{ row }">
+            <div class="text-sm text-gray-700 dark:text-gray-300">
+              <span>{{ getCreditTypeLabel(row.credit_type) }}</span>
+              <p
+                v-if="row.credit_type === 'gift'"
+                class="mt-0.5 text-xs text-gray-500 dark:text-gray-400"
+              >
+                {{
+                  row.gift_validity_days > 0
+                    ? t('admin.promo.validDaysValue', { days: row.gift_validity_days })
+                    : t('admin.promo.validDaysMissing')
+                }}
+              </p>
+            </div>
+          </template>
+
           <template #cell-usage="{ row }">
             <span class="text-sm text-gray-600 dark:text-gray-300">
               {{ row.used_count }} / {{ row.max_uses === 0 ? '∞' : row.max_uses }}
@@ -188,6 +204,20 @@
           />
         </div>
         <div>
+          <label class="input-label">{{ t('admin.promo.creditType') }}</label>
+          <Select v-model="createForm.credit_type" :options="creditTypeOptions" />
+        </div>
+        <div v-if="createForm.credit_type === 'gift'">
+          <label class="input-label">{{ t('admin.promo.giftValidityDays') }}</label>
+          <input
+            v-model.number="createForm.gift_validity_days"
+            type="number"
+            min="1"
+            required
+            class="input"
+          />
+        </div>
+        <div>
           <label class="input-label">
             {{ t('admin.promo.maxUses') }}
             <span class="ml-1 text-xs font-normal text-gray-400">({{ t('admin.promo.zeroUnlimited') }})</span>
@@ -258,6 +288,20 @@
             type="number"
             step="0.01"
             min="0"
+            required
+            class="input"
+          />
+        </div>
+        <div>
+          <label class="input-label">{{ t('admin.promo.creditType') }}</label>
+          <Select v-model="editForm.credit_type" :options="creditTypeOptions" />
+        </div>
+        <div v-if="editForm.credit_type === 'gift'">
+          <label class="input-label">{{ t('admin.promo.giftValidityDays') }}</label>
+          <input
+            v-model.number="editForm.gift_validity_days"
+            type="number"
+            min="1"
             required
             class="input"
           />
@@ -451,6 +495,8 @@ const usagesTotal = ref(0)
 const createForm = reactive({
   code: '',
   bonus_amount: 1,
+  credit_type: 'balance' as 'balance' | 'gift',
+  gift_validity_days: null as number | null,
   max_uses: 0,
   expires_at_str: '',
   notes: ''
@@ -459,6 +505,8 @@ const createForm = reactive({
 const editForm = reactive({
   code: '',
   bonus_amount: 0,
+  credit_type: 'balance' as 'balance' | 'gift',
+  gift_validity_days: null as number | null,
   max_uses: 0,
   status: 'active' as 'active' | 'disabled',
   expires_at_str: '',
@@ -477,9 +525,15 @@ const statusOptions = computed(() => [
   { value: 'disabled', label: t('admin.promo.statusDisabled') }
 ])
 
+const creditTypeOptions = computed(() => [
+  { value: 'balance', label: t('admin.promo.creditTypeBalance') },
+  { value: 'gift', label: t('admin.promo.creditTypeGift') }
+])
+
 const columns = computed<Column[]>(() => [
   { key: 'code', label: t('admin.promo.columns.code') },
   { key: 'bonus_amount', label: t('admin.promo.columns.bonusAmount'), sortable: true },
+  { key: 'credit_type', label: t('admin.promo.columns.creditType') },
   { key: 'usage', label: t('admin.promo.columns.usage') },
   { key: 'status', label: t('admin.promo.columns.status'), sortable: true },
   { key: 'expires_at', label: t('admin.promo.columns.expiresAt'), sortable: true },
@@ -506,6 +560,15 @@ const getStatusLabel = (status: string, row: PromoCode) => {
     return t('admin.promo.statusMaxUsed')
   }
   return status === 'active' ? t('admin.promo.statusActive') : t('admin.promo.statusDisabled')
+}
+
+const getCreditTypeLabel = (creditType?: string) => {
+  return creditType === 'gift' ? t('admin.promo.creditTypeGift') : t('admin.promo.creditTypeBalance')
+}
+
+const isPositiveGiftValidityDays = (value: unknown): value is number => {
+  // 赠送余额有效期是后端必填业务字段，前端只做显式拦截，不再给默认天数。
+  return typeof value === 'number' && Number.isInteger(value) && value > 0
 }
 
 // API calls
@@ -593,11 +656,18 @@ const copyToClipboard = async (text: string) => {
 
 // Create
 const handleCreate = async () => {
+  if (createForm.credit_type === 'gift' && !isPositiveGiftValidityDays(createForm.gift_validity_days)) {
+    appStore.showError(t('admin.promo.giftValidityDaysRequired'))
+    return
+  }
+
   creating.value = true
   try {
     await adminAPI.promo.create({
       code: createForm.code || undefined,
       bonus_amount: createForm.bonus_amount,
+      credit_type: createForm.credit_type,
+      gift_validity_days: createForm.credit_type === 'gift' ? createForm.gift_validity_days! : 0,
       max_uses: createForm.max_uses,
       expires_at: createForm.expires_at_str ? Math.floor(new Date(createForm.expires_at_str).getTime() / 1000) : undefined,
       notes: createForm.notes || undefined
@@ -616,6 +686,8 @@ const handleCreate = async () => {
 const resetCreateForm = () => {
   createForm.code = ''
   createForm.bonus_amount = 1
+  createForm.credit_type = 'balance'
+  createForm.gift_validity_days = null
   createForm.max_uses = 0
   createForm.expires_at_str = ''
   createForm.notes = ''
@@ -626,6 +698,8 @@ const handleEdit = (code: PromoCode) => {
   editingCode.value = code
   editForm.code = code.code
   editForm.bonus_amount = code.bonus_amount
+  editForm.credit_type = code.credit_type
+  editForm.gift_validity_days = code.gift_validity_days > 0 ? code.gift_validity_days : null
   editForm.max_uses = code.max_uses
   editForm.status = code.status
   editForm.expires_at_str = code.expires_at ? new Date(code.expires_at).toISOString().slice(0, 16) : ''
@@ -640,12 +714,18 @@ const closeEditDialog = () => {
 
 const handleUpdate = async () => {
   if (!editingCode.value) return
+  if (editForm.credit_type === 'gift' && !isPositiveGiftValidityDays(editForm.gift_validity_days)) {
+    appStore.showError(t('admin.promo.giftValidityDaysRequired'))
+    return
+  }
 
   updating.value = true
   try {
     await adminAPI.promo.update(editingCode.value.id, {
       code: editForm.code,
       bonus_amount: editForm.bonus_amount,
+      credit_type: editForm.credit_type,
+      gift_validity_days: editForm.credit_type === 'gift' ? editForm.gift_validity_days! : 0,
       max_uses: editForm.max_uses,
       status: editForm.status,
       expires_at: editForm.expires_at_str ? Math.floor(new Date(editForm.expires_at_str).getTime() / 1000) : 0,

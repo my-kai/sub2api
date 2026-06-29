@@ -16,6 +16,7 @@ import (
 
 const (
 	billingBalanceKeyPrefix   = "billing:balance:"
+	billingAvailableKeyPrefix = "billing:available:"
 	billingSubKeyPrefix       = "billing:sub:"
 	billingRateLimitKeyPrefix = "apikey:rate:"
 	billingCacheTTL           = 5 * time.Minute
@@ -41,6 +42,11 @@ func jitteredTTL() time.Duration {
 // billingBalanceKey generates the Redis key for user balance cache.
 func billingBalanceKey(userID int64) string {
 	return fmt.Sprintf("%s%d", billingBalanceKeyPrefix, userID)
+}
+
+// billingAvailableBalanceKey stores ordinary balance plus unexpired gift credit.
+func billingAvailableBalanceKey(userID int64) string {
+	return fmt.Sprintf("%s%d", billingAvailableKeyPrefix, userID)
 }
 
 // billingSubKey generates the Redis key for subscription cache.
@@ -169,6 +175,28 @@ func (c *billingCache) DeductUserBalance(ctx context.Context, userID int64, amou
 
 func (c *billingCache) InvalidateUserBalance(ctx context.Context, userID int64) error {
 	key := billingBalanceKey(userID)
+	return c.rdb.Del(ctx, key).Err()
+}
+
+func (c *billingCache) GetUserAvailableBalance(ctx context.Context, userID int64) (float64, error) {
+	key := billingAvailableBalanceKey(userID)
+	val, err := c.rdb.Get(ctx, key).Result()
+	if err != nil {
+		return 0, err
+	}
+	return strconv.ParseFloat(val, 64)
+}
+
+func (c *billingCache) SetUserAvailableBalance(ctx context.Context, userID int64, balance float64, ttl time.Duration) error {
+	if ttl <= 0 {
+		return nil
+	}
+	key := billingAvailableBalanceKey(userID)
+	return c.rdb.Set(ctx, key, balance, ttl).Err()
+}
+
+func (c *billingCache) InvalidateUserAvailableBalance(ctx context.Context, userID int64) error {
+	key := billingAvailableBalanceKey(userID)
 	return c.rdb.Del(ctx, key).Err()
 }
 

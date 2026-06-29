@@ -31,11 +31,12 @@ func TestSimpleModeBypassesQuotaCheck(t *testing.T) {
 		DailyLimitUSD:    &limit,
 	}
 	user := &service.User{
-		ID:          7,
-		Role:        service.RoleUser,
-		Status:      service.StatusActive,
-		Balance:     10,
-		Concurrency: 3,
+		ID:               7,
+		Role:             service.RoleUser,
+		Status:           service.StatusActive,
+		Balance:          10,
+		Concurrency:      3,
+		AvailableBalance: 10,
 	}
 	apiKey := &service.APIKey{
 		ID:     100,
@@ -188,11 +189,12 @@ func TestAPIKeyAuthSetsGroupContext(t *testing.T) {
 		Hydrated: true,
 	}
 	user := &service.User{
-		ID:          7,
-		Role:        service.RoleUser,
-		Status:      service.StatusActive,
-		Balance:     10,
-		Concurrency: 3,
+		ID:               7,
+		Role:             service.RoleUser,
+		Status:           service.StatusActive,
+		Balance:          10,
+		Concurrency:      3,
+		AvailableBalance: 10,
 	}
 	apiKey := &service.APIKey{
 		ID:     100,
@@ -246,12 +248,13 @@ func TestAPIKeyAuthRejectsExclusiveGroupWhenUserNoLongerAllowed(t *testing.T) {
 		Hydrated:    true,
 	}
 	user := &service.User{
-		ID:            7,
-		Role:          service.RoleUser,
-		Status:        service.StatusActive,
-		Balance:       10,
-		Concurrency:   3,
-		AllowedGroups: []int64{},
+		ID:               7,
+		Role:             service.RoleUser,
+		Status:           service.StatusActive,
+		Balance:          10,
+		AvailableBalance: 10,
+		Concurrency:      3,
+		AllowedGroups:    []int64{},
 	}
 	apiKey := &service.APIKey{
 		ID:     100,
@@ -297,11 +300,12 @@ func TestAPIKeyAuthOverwritesInvalidContextGroup(t *testing.T) {
 		Hydrated: true,
 	}
 	user := &service.User{
-		ID:          7,
-		Role:        service.RoleUser,
-		Status:      service.StatusActive,
-		Balance:     10,
-		Concurrency: 3,
+		ID:               7,
+		Role:             service.RoleUser,
+		Status:           service.StatusActive,
+		Balance:          10,
+		Concurrency:      3,
+		AvailableBalance: 10,
 	}
 	apiKey := &service.APIKey{
 		ID:     100,
@@ -356,11 +360,12 @@ func TestAPIKeyAuthRejectsUnavailableGroup(t *testing.T) {
 
 	groupID := int64(101)
 	user := &service.User{
-		ID:          7,
-		Role:        service.RoleUser,
-		Status:      service.StatusActive,
-		Balance:     10,
-		Concurrency: 3,
+		ID:               7,
+		Role:             service.RoleUser,
+		Status:           service.StatusActive,
+		Balance:          10,
+		Concurrency:      3,
+		AvailableBalance: 10,
 	}
 
 	tests := []struct {
@@ -475,11 +480,12 @@ func TestAPIKeyAuthSetsOpsFallbackKeyOnEarlyAbort(t *testing.T) {
 
 	groupID := int64(101)
 	user := &service.User{
-		ID:          7,
-		Role:        service.RoleUser,
-		Status:      service.StatusActive,
-		Balance:     10,
-		Concurrency: 3,
+		ID:               7,
+		Role:             service.RoleUser,
+		Status:           service.StatusActive,
+		Balance:          10,
+		Concurrency:      3,
+		AvailableBalance: 10,
 	}
 	apiKey := &service.APIKey{
 		ID:      100,
@@ -544,11 +550,12 @@ func TestAPIKeyAuthGoogleSetsOpsFallbackKeyOnEarlyAbort(t *testing.T) {
 
 	groupID := int64(202)
 	user := &service.User{
-		ID:          9,
-		Role:        service.RoleUser,
-		Status:      service.StatusActive,
-		Balance:     10,
-		Concurrency: 3,
+		ID:               9,
+		Role:             service.RoleUser,
+		Status:           service.StatusActive,
+		Balance:          10,
+		Concurrency:      3,
+		AvailableBalance: 10,
 	}
 	apiKey := &service.APIKey{
 		ID:      200,
@@ -649,11 +656,12 @@ func TestAPIKeyAuthIPRestrictionDoesNotTrustForwardedClientIPByDefault(t *testin
 	gin.SetMode(gin.TestMode)
 
 	user := &service.User{
-		ID:          7,
-		Role:        service.RoleUser,
-		Status:      service.StatusActive,
-		Balance:     10,
-		Concurrency: 3,
+		ID:               7,
+		Role:             service.RoleUser,
+		Status:           service.StatusActive,
+		Balance:          10,
+		Concurrency:      3,
+		AvailableBalance: 10,
 	}
 	apiKey := &service.APIKey{
 		ID:          100,
@@ -711,11 +719,12 @@ func TestAPIKeyAuthIPRestrictionCanTrustForwardedClientIPForReverseProxy(t *test
 	gin.SetMode(gin.TestMode)
 
 	user := &service.User{
-		ID:          7,
-		Role:        service.RoleUser,
-		Status:      service.StatusActive,
-		Balance:     10,
-		Concurrency: 3,
+		ID:               7,
+		Role:             service.RoleUser,
+		Status:           service.StatusActive,
+		Balance:          10,
+		Concurrency:      3,
+		AvailableBalance: 10,
 	}
 	apiKey := &service.APIKey{
 		ID:          100,
@@ -762,11 +771,12 @@ func TestAPIKeyAuthTouchesLastUsedOnSuccess(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	user := &service.User{
-		ID:          7,
-		Role:        service.RoleUser,
-		Status:      service.StatusActive,
-		Balance:     10,
-		Concurrency: 3,
+		ID:               7,
+		Role:             service.RoleUser,
+		Status:           service.StatusActive,
+		Balance:          10,
+		Concurrency:      3,
+		AvailableBalance: 10,
 	}
 	apiKey := &service.APIKey{
 		ID:     100,
@@ -811,11 +821,12 @@ func TestAPIKeyAuthTouchLastUsedFailureDoesNotBlock(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	user := &service.User{
-		ID:          8,
-		Role:        service.RoleUser,
-		Status:      service.StatusActive,
-		Balance:     10,
-		Concurrency: 3,
+		ID:               8,
+		Role:             service.RoleUser,
+		Status:           service.StatusActive,
+		Balance:          10,
+		Concurrency:      3,
+		AvailableBalance: 10,
 	}
 	apiKey := &service.APIKey{
 		ID:     101,
@@ -857,11 +868,12 @@ func TestAPIKeyAuthTouchesLastUsedInStandardMode(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	user := &service.User{
-		ID:          9,
-		Role:        service.RoleUser,
-		Status:      service.StatusActive,
-		Balance:     10,
-		Concurrency: 3,
+		ID:               9,
+		Role:             service.RoleUser,
+		Status:           service.StatusActive,
+		Balance:          10,
+		Concurrency:      3,
+		AvailableBalance: 10,
 	}
 	apiKey := &service.APIKey{
 		ID:     102,

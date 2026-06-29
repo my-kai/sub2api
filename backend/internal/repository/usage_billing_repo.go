@@ -4,19 +4,32 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strconv"
 	"strings"
+	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
+	giftstore "github.com/Wei-Shaw/sub2api/internal/custom/giftcredit/store"
+	gifttypes "github.com/Wei-Shaw/sub2api/internal/custom/giftcredit/types"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
 type usageBillingRepository struct {
-	db *sql.DB
+	db              *sql.DB
+	giftCreditStore *giftstore.Store
 }
 
 func NewUsageBillingRepository(_ *dbent.Client, sqlDB *sql.DB) service.UsageBillingRepository {
 	return &usageBillingRepository{db: sqlDB}
+}
+
+// NewUsageBillingRepositoryWithGiftCredit wires the optional custom gift-credit
+// store into the same SQL transaction used by usage billing. Keeping this as a
+// thin constructor avoids changing the ordinary balance deduction function and
+// preserves the existing usage-billing idempotency boundary.
+func NewUsageBillingRepositoryWithGiftCredit(_ *dbent.Client, sqlDB *sql.DB, giftCreditStore *giftstore.Store) service.UsageBillingRepository {
+	return &usageBillingRepository{db: sqlDB, giftCreditStore: giftCreditStore}
 }
 
 func (r *usageBillingRepository) Apply(ctx context.Context, cmd *service.UsageBillingCommand) (_ *service.UsageBillingApplyResult, err error) {
@@ -113,11 +126,27 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 	}
 
 	if cmd.BalanceCost > 0 {
-		newBalance, err := deductUsageBillingBalance(ctx, tx, cmd.UserID, cmd.BalanceCost)
-		if err != nil {
-			return err
+		remainingBalanceCost := cmd.BalanceCost
+		if r.giftCreditStore != nil {
+			// 先在同一事务内扣赠送余额；剩余金额继续交给原普通余额扣费逻辑。
+			deducted, remaining, newGiftBalance, err := r.deductGiftCreditFirst(ctx, tx, cmd)
+			if err != nil {
+				return err
+			}
+			result.GiftDeducted = deducted
+			remainingBalanceCost = remaining
+			if deducted > 0 {
+				result.NewGiftBalance = &newGiftBalance
+			}
 		}
-		result.NewBalance = &newBalance
+		result.BalanceDeducted = remainingBalanceCost
+		if remainingBalanceCost > 0 {
+			newBalance, err := deductUsageBillingBalance(ctx, tx, cmd.UserID, remainingBalanceCost)
+			if err != nil {
+				return err
+			}
+			result.NewBalance = &newBalance
+		}
 	}
 
 	if cmd.APIKeyQuotaCost > 0 {
@@ -143,6 +172,32 @@ func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, t
 	}
 
 	return nil
+}
+
+func (r *usageBillingRepository) deductGiftCreditFirst(ctx context.Context, tx *sql.Tx, cmd *service.UsageBillingCommand) (float64, float64, float64, error) {
+	result, err := r.giftCreditStore.DeductFirst(ctx, tx, gifttypes.DeductInput{
+		UserID:          cmd.UserID,
+		Amount:          strconv.FormatFloat(cmd.BalanceCost, 'f', 8, 64),
+		RequestID:       cmd.RequestID,
+		UsageBillingKey: strings.TrimSpace(cmd.RequestFingerprint),
+		Now:             time.Now().UTC(),
+	})
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	giftDeducted, err := strconv.ParseFloat(result.GiftDeducted, 64)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	remainingCost, err := strconv.ParseFloat(result.RemainingCost, 64)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	newGiftBalance, err := strconv.ParseFloat(result.NewGiftBalance, 64)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	return giftDeducted, remainingCost, newGiftBalance, nil
 }
 
 func incrementUsageBillingSubscription(ctx context.Context, tx *sql.Tx, subscriptionID int64, costUSD float64) error {

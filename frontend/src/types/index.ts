@@ -86,6 +86,8 @@ export interface User {
   wechat_bound?: boolean
   role: 'admin' | 'user' // User role for authorization
   balance: number // User balance for API usage
+  gift_balance: number // Unexpired gift balance for API usage
+  available_balance: number // Ordinary balance plus unexpired gift balance
   concurrency: number // Allowed concurrent requests
   rpm_limit?: number // User-level RPM cap (0 = unlimited); effective as fallback when group has no rpm_limit
   status: 'active' | 'disabled' // Account status
@@ -1802,6 +1804,8 @@ export interface PromoCode {
   status: 'active' | 'disabled'
   expires_at: string | null
   notes: string | null
+  credit_type: 'balance' | 'gift'
+  gift_validity_days: number
   created_at: string
   updated_at: string
 }
@@ -1821,6 +1825,8 @@ export interface CreatePromoCodeRequest {
   max_uses?: number
   expires_at?: number | null
   notes?: string
+  credit_type: 'balance' | 'gift'
+  gift_validity_days: number
 }
 
 export interface UpdatePromoCodeRequest {
@@ -1830,6 +1836,8 @@ export interface UpdatePromoCodeRequest {
   status?: 'active' | 'disabled'
   expires_at?: number | null
   notes?: string
+  credit_type?: 'balance' | 'gift'
+  gift_validity_days?: number
 }
 
 // ==================== TOTP (2FA) Types ====================

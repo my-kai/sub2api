@@ -18,3 +18,28 @@ func TestUserFromServiceShallow_MapsDeletedAt(t *testing.T) {
 	active := UserFromServiceShallow(&service.User{ID: 2, Email: "a@test.com"})
 	require.Nil(t, active.DeletedAt, "active user must have nil DeletedAt")
 }
+
+func TestUserFromServiceShallow_UsesHydratedAvailableBalance(t *testing.T) {
+	user := UserFromServiceShallow(&service.User{
+		ID:               3,
+		Email:            "balance@test.com",
+		Balance:          1.11111111,
+		GiftBalance:      2.22222222,
+		AvailableBalance: 3.33333333,
+	})
+
+	require.Equal(t, 1.11111111, user.Balance)
+	require.Equal(t, 2.22222222, user.GiftBalance)
+	require.Equal(t, 3.33333333, user.AvailableBalance)
+}
+
+func TestUserFromServiceShallow_RequiresHydratedAvailableBalance(t *testing.T) {
+	user := UserFromServiceShallow(&service.User{
+		ID:          4,
+		Email:       "explicit-balance@test.com",
+		Balance:     1.11111111,
+		GiftBalance: 2.22222222,
+	})
+
+	require.Zero(t, user.AvailableBalance)
+}

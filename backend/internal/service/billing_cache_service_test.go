@@ -12,8 +12,9 @@ import (
 )
 
 type billingCacheWorkerStub struct {
-	balanceUpdates      int64
-	subscriptionUpdates int64
+	balanceUpdates       int64
+	subscriptionUpdates  int64
+	availableInvalidates int64
 }
 
 func (b *billingCacheWorkerStub) GetUserBalance(ctx context.Context, userID int64) (float64, error) {
@@ -31,6 +32,19 @@ func (b *billingCacheWorkerStub) DeductUserBalance(ctx context.Context, userID i
 }
 
 func (b *billingCacheWorkerStub) InvalidateUserBalance(ctx context.Context, userID int64) error {
+	return nil
+}
+
+func (b *billingCacheWorkerStub) GetUserAvailableBalance(ctx context.Context, userID int64) (float64, error) {
+	return 0, errors.New("not implemented")
+}
+
+func (b *billingCacheWorkerStub) SetUserAvailableBalance(ctx context.Context, userID int64, balance float64, ttl time.Duration) error {
+	return nil
+}
+
+func (b *billingCacheWorkerStub) InvalidateUserAvailableBalance(ctx context.Context, userID int64) error {
+	atomic.AddInt64(&b.availableInvalidates, 1)
 	return nil
 }
 
@@ -129,4 +143,17 @@ func TestBillingCacheServiceEnqueueAfterStopReturnsFalse(t *testing.T) {
 		amount: 1,
 	})
 	require.False(t, enqueued)
+}
+
+func TestBillingCacheServiceQueueDeductBalanceInvalidatesAvailableBalance(t *testing.T) {
+	cache := &billingCacheWorkerStub{}
+	svc := NewBillingCacheService(cache, nil, nil, nil, nil, nil, &config.Config{}, nil)
+	t.Cleanup(svc.Stop)
+
+	svc.QueueDeductBalance(7, 0.5)
+
+	require.Equal(t, int64(1), atomic.LoadInt64(&cache.availableInvalidates))
+	require.Eventually(t, func() bool {
+		return atomic.LoadInt64(&cache.balanceUpdates) > 0
+	}, 2*time.Second, 10*time.Millisecond)
 }

@@ -9,9 +9,13 @@
           >
             <Icon name="creditCard" size="xl" class="text-white" />
           </div>
-          <p class="text-sm font-medium text-primary-100">{{ t('redeem.currentBalance') }}</p>
+          <p class="text-sm font-medium text-primary-100">{{ t('redeem.availableBalance') }}</p>
           <p class="mt-2 text-4xl font-bold text-white">
-            ${{ user?.balance?.toFixed(2) || '0.00' }}
+            <template v-if="user">${{ formatBalance(user.available_balance) }}</template>
+          </p>
+          <p v-if="user" class="mt-2 text-sm text-primary-100">
+            {{ t('redeem.currentBalance') }}: ${{ formatBalance(user.balance) }}
+            · {{ t('redeem.giftBalance') }}: ${{ formatBalance(user.gift_balance) }}
           </p>
           <p class="mt-2 text-sm text-primary-100">
             {{ t('redeem.concurrency') }}: {{ user?.concurrency || 0 }} {{ t('redeem.requests') }}
@@ -371,6 +375,15 @@ const redeemResult = ref<{
   validity_days?: number
 } | null>(null)
 const errorMessage = ref('')
+
+const balanceFormatter = new Intl.NumberFormat('en-US', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+})
+
+function formatBalance(value: number): string {
+  return balanceFormatter.format(value)
+}
 
 // History data
 const history = ref<RedeemHistoryItem[]>([])
