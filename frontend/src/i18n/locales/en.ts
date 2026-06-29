@@ -1213,6 +1213,7 @@ export default {
     title: 'Profile Settings',
     description: 'Manage your account information and settings',
     accountBalance: 'Account Balance',
+    giftBalanceShort: 'Gift',
     concurrencyLimit: 'Concurrency Limit',
     rpmLimit: 'RPM Limit',
     rpmUnlimited: 'Unlimited',

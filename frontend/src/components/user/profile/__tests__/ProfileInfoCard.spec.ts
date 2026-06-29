@@ -33,6 +33,8 @@ vi.mock('vue-i18n', async (importOriginal) => {
         if (key === 'profile.memberSince') return 'Member Since'
         if (key === 'profile.administrator') return 'Administrator'
         if (key === 'profile.user') return 'User'
+        if (key === 'profile.giftBalanceShort') return 'Gift'
+        if (key === 'common.balance') return 'Balance'
         if (key === 'profile.authBindings.providers.email') return 'Email'
         if (key === 'profile.authBindings.providers.linuxdo') return 'LinuxDo'
         if (key === 'profile.authBindings.providers.wechat') return 'WeChat'
@@ -57,6 +59,8 @@ function createUser(overrides: Partial<User> = {}): User {
     avatar_url: null,
     role: 'user',
     balance: 10,
+    gift_balance: 0,
+    available_balance: 10,
     concurrency: 2,
     status: 'active',
     allowed_groups: null,
@@ -193,5 +197,31 @@ describe('ProfileInfoCard', () => {
     expect(wrapper.get('[data-testid="profile-side-column"]').exists()).toBe(true)
     expect(wrapper.get('[data-testid="profile-basics-panel"]').exists()).toBe(true)
     expect(wrapper.get('[data-testid="profile-auth-bindings-panel"]').exists()).toBe(true)
+  })
+
+  it('renders available balance with ordinary and gift balance breakdown', () => {
+    const wrapper = mount(ProfileInfoCard, {
+      props: {
+        user: createUser({
+          balance: 10,
+          gift_balance: 2.345,
+          available_balance: 12.345
+        })
+      },
+      global: {
+        stubs: {
+          Icon: true
+        }
+      }
+    })
+
+    const balanceMetric = wrapper.get('[data-testid="profile-overview-metric-balance"]')
+    expect(balanceMetric.text()).toContain('$12.35')
+    expect(balanceMetric.text()).toContain('Balance $10.00')
+    expect(balanceMetric.text()).toContain('Gift $2.35')
+    expect(balanceMetric.text()).not.toContain('Available')
+    expect(balanceMetric.text()).not.toContain('Gift Balance')
+    expect(balanceMetric.attributes('title')).toContain('Balance: $10.00')
+    expect(balanceMetric.attributes('title')).toContain('Gift: $2.35')
   })
 })

@@ -1217,6 +1217,7 @@ export default {
     title: '个人设置',
     description: '管理您的账户信息和设置',
     accountBalance: '账户余额',
+    giftBalanceShort: '赠送',
     concurrencyLimit: '并发限制',
     rpmLimit: 'RPM 限制',
     rpmUnlimited: '不限制',

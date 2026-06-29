@@ -62,13 +62,35 @@
               <div
                 data-testid="profile-overview-metric-balance"
                 class="rounded-2xl bg-white/85 px-4 py-3 shadow-sm ring-1 ring-white/70 dark:bg-dark-900/60 dark:ring-dark-700"
+                :title="user ? balanceBreakdownTooltip : undefined"
               >
                 <p class="text-xs font-medium uppercase tracking-[0.16em] text-gray-400 dark:text-gray-500">
                   {{ t('profile.accountBalance') }}
                 </p>
                 <p class="mt-1 text-lg font-semibold text-gray-900 dark:text-white">
-                  {{ formatCurrency(user?.balance || 0) }}
+                  <template v-if="user">
+                    {{ formatCurrency(user.available_balance) }}
+                  </template>
+                  <template v-else>-</template>
                 </p>
+                <div
+                  v-if="user"
+                  class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs"
+                  :title="balanceBreakdownTooltip"
+                >
+                  <span
+                    class="font-medium text-gray-600 dark:text-gray-300"
+                    :title="ordinaryBalanceTooltip"
+                  >
+                    {{ t('common.balance') }} {{ formatCurrency(user.balance) }}
+                  </span>
+                  <span
+                    class="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
+                    :title="giftBalanceTooltip"
+                  >
+                    {{ t('profile.giftBalanceShort') }} {{ formatCurrency(user.gift_balance) }}
+                  </span>
+                </div>
               </div>
               <div
                 data-testid="profile-overview-metric-concurrency"
@@ -272,9 +294,18 @@ const providerLabels = computed<Record<UserAuthProvider, string>>(() => ({
   google: 'Google'
 }))
 
+const currencyFormatter = new Intl.NumberFormat('en-US', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+})
+
 function formatCurrency(value: number): string {
-  return `$${value.toFixed(2)}`
+  return `$${currencyFormatter.format(value)}`
 }
+
+const ordinaryBalanceTooltip = computed(() => props.user ? `${t('common.balance')}: ${formatCurrency(props.user.balance)}` : '')
+const giftBalanceTooltip = computed(() => props.user ? `${t('profile.giftBalanceShort')}: ${formatCurrency(props.user.gift_balance)}` : '')
+const balanceBreakdownTooltip = computed(() => props.user ? `${ordinaryBalanceTooltip.value} / ${giftBalanceTooltip.value}` : '')
 
 function normalizeProvider(value: string): UserAuthProvider | null {
   const normalized = value.trim().toLowerCase()
