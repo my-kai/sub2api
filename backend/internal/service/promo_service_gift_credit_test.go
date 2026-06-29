@@ -77,7 +77,7 @@ func (s *promoRepoStubForGiftCredit) IncrementUsedCount(ctx context.Context, id 
 	panic("unexpected IncrementUsedCount call")
 }
 
-func TestPromoServiceCreateGiftRequiresValidityDays(t *testing.T) {
+func TestPromoServiceCreateGiftRequiresExplicitValidityDays(t *testing.T) {
 	repo := &promoRepoStubForGiftCredit{}
 	svc := NewPromoService(repo, nil, nil, nil, nil)
 
@@ -85,6 +85,21 @@ func TestPromoServiceCreateGiftRequiresValidityDays(t *testing.T) {
 		Code:        "GIFT0",
 		BonusAmount: 1,
 		CreditType:  creditTypeGift,
+	})
+	require.ErrorIs(t, err, ErrPromoGiftValidityRequired)
+	require.Nil(t, repo.created)
+}
+
+func TestPromoServiceCreateGiftRejectsNegativeValidityDays(t *testing.T) {
+	repo := &promoRepoStubForGiftCredit{}
+	svc := NewPromoService(repo, nil, nil, nil, nil)
+
+	validityDays := -1
+	_, err := svc.Create(context.Background(), &CreatePromoCodeInput{
+		Code:             "GIFT_NEGATIVE",
+		BonusAmount:      1,
+		CreditType:       creditTypeGift,
+		GiftValidityDays: &validityDays,
 	})
 	require.ErrorIs(t, err, ErrPromoGiftValidityRequired)
 	require.Nil(t, repo.created)
@@ -122,11 +137,12 @@ func TestPromoServiceCreateGiftStoresExplicitValidityDays(t *testing.T) {
 	repo := &promoRepoStubForGiftCredit{}
 	svc := NewPromoService(repo, nil, nil, nil, nil)
 
+	validityDays := 7
 	code, err := svc.Create(context.Background(), &CreatePromoCodeInput{
 		Code:             "GIFT7",
 		BonusAmount:      1,
 		CreditType:       creditTypeGift,
-		GiftValidityDays: 7,
+		GiftValidityDays: &validityDays,
 	})
 	require.NoError(t, err)
 	require.NotNil(t, repo.created)
@@ -135,7 +151,25 @@ func TestPromoServiceCreateGiftStoresExplicitValidityDays(t *testing.T) {
 	require.Contains(t, repo.created.Notes, `"gift_validity_days":7`)
 }
 
-func TestPromoServiceValidateGiftRequiresValidityDays(t *testing.T) {
+func TestPromoServiceCreateGiftStoresPermanentValidityDays(t *testing.T) {
+	repo := &promoRepoStubForGiftCredit{}
+	svc := NewPromoService(repo, nil, nil, nil, nil)
+
+	validityDays := 0
+	code, err := svc.Create(context.Background(), &CreatePromoCodeInput{
+		Code:             "GIFT0",
+		BonusAmount:      1,
+		CreditType:       creditTypeGift,
+		GiftValidityDays: &validityDays,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, repo.created)
+	require.Equal(t, creditTypeGift, code.CreditType)
+	require.Zero(t, code.GiftValidityDays)
+	require.Contains(t, repo.created.Notes, `"gift_validity_days":0`)
+}
+
+func TestPromoServiceValidateGiftMissingValidityDays(t *testing.T) {
 	repo := &promoRepoStubForGiftCredit{
 		byCode: &PromoCode{
 			ID:          1,
@@ -149,6 +183,24 @@ func TestPromoServiceValidateGiftRequiresValidityDays(t *testing.T) {
 
 	_, err := svc.ValidatePromoCode(context.Background(), "GIFT_MISSING_VALIDITY")
 	require.ErrorIs(t, err, ErrPromoGiftValidityRequired)
+}
+
+func TestPromoServiceValidateGiftAcceptsPermanentValidityDays(t *testing.T) {
+	repo := &promoRepoStubForGiftCredit{
+		byCode: &PromoCode{
+			ID:          1,
+			Code:        "GIFT_PERMANENT",
+			BonusAmount: 1,
+			Status:      PromoCodeStatusActive,
+			Notes:       `<!-- sub2api_custom_promo_meta:{"credit_type":"gift","gift_validity_days":0} -->`,
+		},
+	}
+	svc := NewPromoService(repo, nil, nil, nil, nil)
+
+	code, err := svc.ValidatePromoCode(context.Background(), "GIFT_PERMANENT")
+	require.NoError(t, err)
+	require.Equal(t, creditTypeGift, code.CreditType)
+	require.Zero(t, code.GiftValidityDays)
 }
 
 func TestPromoServiceUpdateRejectsInvalidCreditType(t *testing.T) {

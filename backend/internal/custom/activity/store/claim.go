@@ -343,10 +343,13 @@ func lockSettlement(ctx context.Context, exec sqlExecutor, activityID int64) err
 }
 
 func insertActivityGiftCreditGrant(ctx context.Context, exec sqlExecutor, input ClaimTransactionInput, claimID int64, at time.Time) error {
-	if input.GiftValidityDays <= 0 {
+	if input.GiftValidityDays < 0 {
 		return types.ErrInvalidInput
 	}
-	expiresAt := at.UTC().AddDate(0, 0, input.GiftValidityDays)
+	var expiresAt any
+	if input.GiftValidityDays > 0 {
+		expiresAt = at.UTC().AddDate(0, 0, input.GiftValidityDays)
+	}
 	sourceID := fmt.Sprintf("activity:%d:round:%d:claim:%d", input.ActivityID, input.RoundID, claimID)
 	note := activityGiftCreditNote(input.ActivityTitle)
 	grantsTable, err := giftCreditTableName("custom_gift_credit_grants")
@@ -384,6 +387,7 @@ func insertActivityGiftCreditGrant(ctx context.Context, exec sqlExecutor, input 
 			active_remaining_amount = `+balancesTable+`.active_remaining_amount + EXCLUDED.active_remaining_amount,
 			next_expires_at = CASE
 				WHEN `+balancesTable+`.next_expires_at IS NULL THEN EXCLUDED.next_expires_at
+				WHEN EXCLUDED.next_expires_at IS NULL THEN `+balancesTable+`.next_expires_at
 				WHEN EXCLUDED.next_expires_at < `+balancesTable+`.next_expires_at THEN EXCLUDED.next_expires_at
 				ELSE `+balancesTable+`.next_expires_at
 			END,

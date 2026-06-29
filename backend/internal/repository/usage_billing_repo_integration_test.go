@@ -166,12 +166,13 @@ func TestUsageBillingRepositoryApply_GiftCreditBalanceScenarios(t *testing.T) {
 				Name:   "gift-billing",
 			})
 			if tt.giftAmount != "" {
+				expiresAt := time.Now().UTC().Add(time.Hour)
 				_, err := giftStore.CreateGrant(ctx, gifttypes.CreateGrantInput{
 					UserID:     user.ID,
 					SourceType: gifttypes.SourceAdminGrant,
 					SourceID:   "test:" + uuid.NewString(),
 					Amount:     tt.giftAmount,
-					ExpiresAt:  time.Now().UTC().Add(time.Hour),
+					ExpiresAt:  &expiresAt,
 					CreatedAt:  time.Now().UTC(),
 				})
 				require.NoError(t, err)

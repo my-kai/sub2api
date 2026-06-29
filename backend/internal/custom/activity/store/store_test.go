@@ -180,7 +180,85 @@ func TestStoreSettleClaimCreditsBalanceAndHistory(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestStoreSettleClaimRejectsGiftCreditWithoutValidityDays(t *testing.T) {
+func TestStoreSettleClaimCreditsPermanentGiftCredit(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	activityStore, err := NewStore(db, "")
+	require.NoError(t, err)
+
+	createdAt := time.Date(2026, 6, 18, 12, 0, 0, 0, time.UTC)
+	mock.ExpectBegin()
+	mock.ExpectExec(regexp.QuoteMeta("SELECT pg_advisory_xact_lock($1)")).
+		WithArgs(int64(7)).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(regexp.QuoteMeta("FROM custom_red_packet_rain_claims")).
+		WithArgs(int64(7), int64(9), int64(11), "permanent-validity").
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(regexp.QuoteMeta("FROM custom_red_packet_rain_claims")).
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"issued", "participants"}).AddRow("0.00000000", int64(0)))
+	mock.ExpectQuery(regexp.QuoteMeta("WHERE activity_id = $1 AND round_id = $2 AND user_id = $3")).
+		WithArgs(int64(7), int64(9), int64(11)).
+		WillReturnRows(sqlmock.NewRows([]string{"user_round"}).AddRow("0.00000000"))
+	mock.ExpectQuery(regexp.QuoteMeta("WHERE activity_id = $1 AND user_id = $2")).
+		WithArgs(int64(7), int64(11)).
+		WillReturnRows(sqlmock.NewRows([]string{"user_activity"}).AddRow("0.00000000"))
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO custom_red_packet_rain_claims")).
+		WithArgs(int64(7), int64(9), int64(11), 4, "2.00000000", "permanent-validity", createdAt).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "activity_id", "round_id", "user_id", "hit_count", "reward_amount", "idempotency_key", "created_at",
+		}).AddRow(int64(101), int64(7), int64(9), int64(11), 4, "2.00000000", "permanent-validity", createdAt))
+	mock.ExpectQuery(regexp.QuoteMeta("INSERT INTO custom_gift_credit_grants")).
+		WithArgs(
+			int64(11),
+			"activity_reward",
+			"activity:7:round:9:claim:101",
+			"2.00000000",
+			nil,
+			"active",
+			"活动赠送余额：夏日红包雨",
+			createdAt,
+		).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(200)))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO custom_gift_credit_user_balances")).
+		WithArgs(int64(11), "2.00000000", nil, createdAt).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO redeem_codes")).
+		WithArgs(sqlmock.AnyArg(), activityRewardRedeemType, "2.00000000", "used", int64(11), createdAt, "活动赠送余额：夏日红包雨").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(regexp.QuoteMeta("FROM custom_red_packet_rain_claims")).
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"issued", "participants"}).AddRow("2.00000000", int64(1)))
+	mock.ExpectQuery(regexp.QuoteMeta("WHERE activity_id = $1 AND round_id = $2 AND user_id = $3")).
+		WithArgs(int64(7), int64(9), int64(11)).
+		WillReturnRows(sqlmock.NewRows([]string{"user_round"}).AddRow("2.00000000"))
+	mock.ExpectQuery(regexp.QuoteMeta("WHERE activity_id = $1 AND user_id = $2")).
+		WithArgs(int64(7), int64(11)).
+		WillReturnRows(sqlmock.NewRows([]string{"user_activity"}).AddRow("2.00000000"))
+	mock.ExpectCommit()
+
+	result, err := activityStore.SettleClaim(t.Context(), ClaimTransactionInput{
+		ActivityID:       7,
+		RoundID:          9,
+		UserID:           11,
+		HitCount:         4,
+		IdempotencyKey:   "permanent-validity",
+		ActivityTitle:    "夏日红包雨",
+		CreatedAt:        createdAt,
+		GiftValidityDays: 0,
+	}, func(summary types.ClaimSummary) (ClaimRewardDecision, error) {
+		require.Equal(t, "0.00000000", summary.ActivityIssuedAmount)
+		return ClaimRewardDecision{RewardAmount: "2.00000000", CreditUserBalance: true}, nil
+	})
+	require.NoError(t, err)
+	require.False(t, result.Duplicate)
+	require.Equal(t, "2.00000000", result.Claim.RewardAmount)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestStoreSettleClaimRejectsNegativeGiftCreditValidityDays(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer db.Close()
@@ -213,13 +291,14 @@ func TestStoreSettleClaimRejectsGiftCreditWithoutValidityDays(t *testing.T) {
 	mock.ExpectRollback()
 
 	_, err = activityStore.SettleClaim(t.Context(), ClaimTransactionInput{
-		ActivityID:     7,
-		RoundID:        9,
-		UserID:         11,
-		HitCount:       4,
-		IdempotencyKey: "missing-validity",
-		ActivityTitle:  "夏日红包雨",
-		CreatedAt:      createdAt,
+		ActivityID:       7,
+		RoundID:          9,
+		UserID:           11,
+		HitCount:         4,
+		IdempotencyKey:   "missing-validity",
+		ActivityTitle:    "夏日红包雨",
+		CreatedAt:        createdAt,
+		GiftValidityDays: -1,
 	}, func(summary types.ClaimSummary) (ClaimRewardDecision, error) {
 		require.Equal(t, "0.00000000", summary.ActivityIssuedAmount)
 		return ClaimRewardDecision{RewardAmount: "2.00000000", CreditUserBalance: true}, nil

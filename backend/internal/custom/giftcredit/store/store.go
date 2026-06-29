@@ -72,7 +72,7 @@ func (s *Store) CreateGrant(ctx context.Context, input types.CreateGrantInput) (
 	if err != nil {
 		return types.Grant{}, err
 	}
-	if err := s.upsertUserBalanceDelta(ctx, tx, input.UserID, normalizeAmount(input.Amount), &input.ExpiresAt, input.CreatedAt); err != nil {
+	if err := s.upsertUserBalanceDelta(ctx, tx, input.UserID, normalizeAmount(input.Amount), input.ExpiresAt, input.CreatedAt); err != nil {
 		return types.Grant{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -264,6 +264,10 @@ func (s *Store) DeductFirst(ctx context.Context, exec SQLExecutor, input types.D
 }
 
 func (s *Store) createGrantWithExecutor(ctx context.Context, exec SQLExecutor, input types.CreateGrantInput) (types.Grant, error) {
+	var expiresAt any
+	if input.ExpiresAt != nil {
+		expiresAt = input.ExpiresAt.UTC()
+	}
 	row := exec.QueryRowContext(ctx, `
 		INSERT INTO `+s.table("custom_gift_credit_grants")+` (
 			user_id, source_type, source_id, original_amount, remaining_amount,
@@ -273,7 +277,7 @@ func (s *Store) createGrantWithExecutor(ctx context.Context, exec SQLExecutor, i
 		)
 		RETURNING `+grantColumns()+`
 	`, input.UserID, strings.TrimSpace(input.SourceType), strings.TrimSpace(input.SourceID),
-		normalizeAmount(input.Amount), input.ExpiresAt.UTC(), types.StatusActive,
+		normalizeAmount(input.Amount), expiresAt, types.StatusActive,
 		strings.TrimSpace(input.Note), input.CreatedBy, normalizeNow(input.CreatedAt))
 	grant, err := scanGrant(row)
 	if err != nil {
@@ -363,6 +367,7 @@ func (s *Store) refreshUserBalanceWithExecutor(ctx context.Context, exec SQLExec
 		WHERE user_id = $3
 		  AND status = $4
 		  AND remaining_amount > 0
+		  AND expires_at IS NOT NULL
 		  AND expires_at <= $2
 	`, types.StatusExpired, now.UTC(), userID, types.StatusActive); err != nil {
 		return fmt.Errorf("expire gift credit grants: %w", err)
@@ -412,6 +417,7 @@ func (s *Store) setUserBalanceAggregate(ctx context.Context, exec SQLExecutor, u
 		        WHERE user_id = $1
 		          AND status = $3
 		          AND remaining_amount > 0
+		          AND expires_at IS NOT NULL
 		          AND expires_at > $4
 		    ),
 		    refreshed_at = $4,
@@ -439,7 +445,7 @@ func (s *Store) recomputeUserBalance(ctx context.Context, exec SQLExecutor, user
 		WHERE user_id = $1
 		  AND status = $3
 		  AND remaining_amount > 0
-		  AND expires_at > $2
+		  AND (expires_at IS NULL OR expires_at > $2)
 		ON CONFLICT (user_id) DO UPDATE SET
 			active_remaining_amount = EXCLUDED.active_remaining_amount,
 			next_expires_at = EXCLUDED.next_expires_at,
@@ -462,8 +468,8 @@ func (s *Store) lockUsableGrants(ctx context.Context, exec SQLExecutor, userID i
 		WHERE user_id = $1
 		  AND status = $2
 		  AND remaining_amount > 0
-		  AND expires_at > $3
-		ORDER BY expires_at ASC, id ASC
+		  AND (expires_at IS NULL OR expires_at > $3)
+		ORDER BY expires_at ASC NULLS LAST, id ASC
 		LIMIT $4
 		FOR UPDATE
 	`, userID, types.StatusActive, now.UTC(), limit)
@@ -494,6 +500,7 @@ func (s *Store) applyGrantDeduction(ctx context.Context, exec SQLExecutor, grant
 		  AND user_id = $5
 		  AND remaining_amount >= $6::decimal
 		  AND status = $7
+		  AND (expires_at IS NULL OR expires_at > $3)
 	`, normalizeAmountDecimal(remainingAfter), status, now.UTC(), grant.ID, input.UserID,
 		normalizeAmountDecimal(amount), types.StatusActive)
 	if err != nil {
@@ -529,7 +536,7 @@ func validateCreateGrantInput(input types.CreateGrantInput) error {
 		return types.ErrInvalidInput
 	}
 	createdAt := normalizeNow(input.CreatedAt)
-	if !input.ExpiresAt.After(createdAt) {
+	if input.ExpiresAt != nil && !input.ExpiresAt.After(createdAt) {
 		return types.ErrInvalidInput
 	}
 	switch strings.TrimSpace(input.SourceType) {

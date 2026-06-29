@@ -42,6 +42,10 @@ func createGiftCreditGrantSQL(ctx context.Context, exec giftCreditSQLExecutor, i
 
 	createdAt := normalizeGiftCreatedAt(input.CreatedAt)
 	amount := strings.TrimSpace(input.Amount)
+	var expiresAt any
+	if input.ExpiresAt != nil {
+		expiresAt = input.ExpiresAt.UTC()
+	}
 	rows, err := exec.QueryContext(ctx, `
 		INSERT INTO `+grantsTable+` (
 			user_id, source_type, source_id, original_amount, remaining_amount,
@@ -52,7 +56,7 @@ func createGiftCreditGrantSQL(ctx context.Context, exec giftCreditSQLExecutor, i
 		RETURNING id, user_id, source_type, source_id, original_amount::text, remaining_amount::text,
 		          expires_at, status, note, created_by, created_at, updated_at
 	`, input.UserID, strings.TrimSpace(input.SourceType), strings.TrimSpace(input.SourceID),
-		amount, input.ExpiresAt.UTC(), gifttypes.StatusActive, strings.TrimSpace(input.Note),
+		amount, expiresAt, gifttypes.StatusActive, strings.TrimSpace(input.Note),
 		input.CreatedBy, createdAt)
 	if err != nil {
 		return gifttypes.Grant{}, fmt.Errorf("create gift credit grant: %w", err)
@@ -86,11 +90,12 @@ func createGiftCreditGrantSQL(ctx context.Context, exec giftCreditSQLExecutor, i
 			active_remaining_amount = `+balancesTable+`.active_remaining_amount + EXCLUDED.active_remaining_amount,
 			next_expires_at = CASE
 				WHEN `+balancesTable+`.next_expires_at IS NULL THEN EXCLUDED.next_expires_at
+				WHEN EXCLUDED.next_expires_at IS NULL THEN `+balancesTable+`.next_expires_at
 				WHEN EXCLUDED.next_expires_at < `+balancesTable+`.next_expires_at THEN EXCLUDED.next_expires_at
 				ELSE `+balancesTable+`.next_expires_at
 			END,
 			updated_at = EXCLUDED.updated_at
-	`, input.UserID, amount, input.ExpiresAt.UTC(), createdAt); err != nil {
+	`, input.UserID, amount, expiresAt, createdAt); err != nil {
 		return gifttypes.Grant{}, fmt.Errorf("upsert gift credit user balance: %w", err)
 	}
 	return grant, nil
@@ -107,7 +112,8 @@ func validateGiftCreditGrantInput(input gifttypes.CreateGrantInput) error {
 	if err != nil || amount.LessThanOrEqual(decimal.Zero) {
 		return gifttypes.ErrInvalidInput
 	}
-	if !input.ExpiresAt.After(normalizeGiftCreatedAt(input.CreatedAt)) {
+	createdAt := normalizeGiftCreatedAt(input.CreatedAt)
+	if input.ExpiresAt != nil && !input.ExpiresAt.After(createdAt) {
 		return gifttypes.ErrInvalidInput
 	}
 	switch strings.TrimSpace(input.SourceType) {
@@ -120,6 +126,7 @@ func validateGiftCreditGrantInput(input gifttypes.CreateGrantInput) error {
 
 func scanGiftCreditGrant(rows *sql.Rows) (gifttypes.Grant, error) {
 	var grant gifttypes.Grant
+	var expiresAt sql.NullTime
 	if err := rows.Scan(
 		&grant.ID,
 		&grant.UserID,
@@ -127,7 +134,7 @@ func scanGiftCreditGrant(rows *sql.Rows) (gifttypes.Grant, error) {
 		&grant.SourceID,
 		&grant.OriginalAmount,
 		&grant.RemainingAmount,
-		&grant.ExpiresAt,
+		&expiresAt,
 		&grant.Status,
 		&grant.Note,
 		&grant.CreatedBy,
@@ -136,7 +143,10 @@ func scanGiftCreditGrant(rows *sql.Rows) (gifttypes.Grant, error) {
 	); err != nil {
 		return gifttypes.Grant{}, fmt.Errorf("scan gift credit grant: %w", err)
 	}
-	grant.ExpiresAt = grant.ExpiresAt.UTC()
+	if expiresAt.Valid {
+		expiresAtUTC := expiresAt.Time.UTC()
+		grant.ExpiresAt = &expiresAtUTC
+	}
 	grant.CreatedAt = grant.CreatedAt.UTC()
 	grant.UpdatedAt = grant.UpdatedAt.UTC()
 	return grant, nil

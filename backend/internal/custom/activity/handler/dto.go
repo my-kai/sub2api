@@ -45,9 +45,9 @@ type claimRequest struct {
 }
 
 type wsTicketRequest struct {
-	RoundID             int64  `json:"round_id"`
-	DeviceFingerprint   string `json:"device_fingerprint"`
-	ClientNonce         string `json:"client_nonce"`
+	RoundID           int64  `json:"round_id"`
+	DeviceFingerprint string `json:"device_fingerprint"`
+	ClientNonce       string `json:"client_nonce"`
 }
 
 type wsMessage struct {
@@ -125,26 +125,53 @@ type adminClaimItem struct {
 }
 
 type adminActivityUpsertRequest struct {
-	Type          types.ActivityType        `json:"type"`
-	Title         string                    `json:"title"`
-	Description   string                    `json:"description"`
-	CoverURL      string                    `json:"cover_url"`
-	StartsAt      time.Time                 `json:"starts_at"`
-	EndsAt        time.Time                 `json:"ends_at"`
-	RedPacketRain types.RedPacketRainConfig `json:"red_packet_rain"`
+	Type          types.ActivityType            `json:"type"`
+	Title         string                        `json:"title"`
+	Description   string                        `json:"description"`
+	CoverURL      string                        `json:"cover_url"`
+	StartsAt      time.Time                     `json:"starts_at"`
+	EndsAt        time.Time                     `json:"ends_at"`
+	RedPacketRain adminRedPacketRainConfigInput `json:"red_packet_rain"`
+}
+
+type adminRedPacketRainConfigInput struct {
+	RoundCount           int    `json:"round_count"`
+	RoundDurationSeconds int    `json:"round_duration_seconds"`
+	RoundIntervalSeconds int    `json:"round_interval_seconds"`
+	TotalBudget          string `json:"total_budget"`
+	PerUserRoundCap      string `json:"per_user_round_cap"`
+	PerUserTotalCap      string `json:"per_user_total_cap"`
+	BaseUnitAmount       string `json:"base_unit_amount"`
+	MaxSingleReward      string `json:"max_single_reward"`
+	ProbabilityStep      string `json:"probability_step"`
+	GiftValidityDays     *int   `json:"gift_validity_days"`
 }
 
 func (r adminActivityUpsertRequest) toServiceInput(id int64, createdBy int64) (activityservice.UpsertActivityInput, error) {
+	if r.RedPacketRain.GiftValidityDays == nil {
+		return activityservice.UpsertActivityInput{}, types.ErrInvalidInput
+	}
 	return activityservice.UpsertActivityInput{
-		ID:            id,
-		Type:          r.Type,
-		Title:         strings.TrimSpace(r.Title),
-		Description:   strings.TrimSpace(r.Description),
-		CoverURL:      strings.TrimSpace(r.CoverURL),
-		StartsAt:      r.StartsAt.UTC(),
-		EndsAt:        r.EndsAt.UTC(),
-		CreatedBy:     createdBy,
-		RedPacketRain: r.RedPacketRain,
+		ID:          id,
+		Type:        r.Type,
+		Title:       strings.TrimSpace(r.Title),
+		Description: strings.TrimSpace(r.Description),
+		CoverURL:    strings.TrimSpace(r.CoverURL),
+		StartsAt:    r.StartsAt.UTC(),
+		EndsAt:      r.EndsAt.UTC(),
+		CreatedBy:   createdBy,
+		RedPacketRain: types.RedPacketRainConfig{
+			RoundCount:           r.RedPacketRain.RoundCount,
+			RoundDurationSeconds: r.RedPacketRain.RoundDurationSeconds,
+			RoundIntervalSeconds: r.RedPacketRain.RoundIntervalSeconds,
+			TotalBudget:          r.RedPacketRain.TotalBudget,
+			PerUserRoundCap:      r.RedPacketRain.PerUserRoundCap,
+			PerUserTotalCap:      r.RedPacketRain.PerUserTotalCap,
+			BaseUnitAmount:       r.RedPacketRain.BaseUnitAmount,
+			MaxSingleReward:      r.RedPacketRain.MaxSingleReward,
+			ProbabilityStep:      r.RedPacketRain.ProbabilityStep,
+			GiftValidityDays:     *r.RedPacketRain.GiftValidityDays,
+		},
 	}, nil
 }
 

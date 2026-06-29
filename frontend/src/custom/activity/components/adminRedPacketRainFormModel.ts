@@ -31,7 +31,7 @@ export interface AdminRedPacketRainFormState {
 /**
  * 创建默认表单值。
  *
- * 默认时间给出可编辑的未来窗口；赠送余额有效期保持空值，要求管理员显式填写。
+ * 默认时间给出可编辑的未来窗口；赠送余额有效期保持空值，要求管理员显式填写，0 表示永久有效。
  */
 export function createDefaultRedPacketRainForm(): AdminRedPacketRainFormState {
   const startsAt = new Date(Date.now() + 60 * 60 * 1000)
@@ -78,7 +78,7 @@ export function redPacketRainFormFromActivity(activity: AdminCustomActivityDetai
     base_unit_amount: config?.base_unit_amount || '',
     max_single_reward: config?.max_single_reward || '',
     probability_step: config?.probability_step || '',
-    gift_validity_days: config?.gift_validity_days ? String(config.gift_validity_days) : '',
+    gift_validity_days: typeof config?.gift_validity_days === 'number' ? String(config.gift_validity_days) : '',
   }
 }
 
@@ -119,7 +119,7 @@ export function validateRedPacketRainForm(form: AdminRedPacketRainFormState): st
   validatePositiveMoney(form.base_unit_amount, '基础奖励金额', nextErrors)
   validatePositiveMoney(form.max_single_reward, '单次最高奖励', nextErrors)
   validatePositiveMoney(form.probability_step, '概率步长', nextErrors)
-  validatePositiveInteger(form.gift_validity_days, '赠送余额有效时长', nextErrors)
+  validateNonNegativeInteger(form.gift_validity_days, '赠送余额有效时长', nextErrors)
 
   if (isPositiveMoney(form.per_user_total_cap) && isPositiveMoney(form.total_budget)) {
     if (compareDecimalStrings(form.per_user_total_cap, form.total_budget) > 0) {

@@ -88,7 +88,9 @@
                 class="mt-0.5 text-xs text-gray-500 dark:text-gray-400"
               >
                 {{
-                  row.gift_validity_days > 0
+                  row.gift_validity_days === 0
+                    ? t('admin.promo.validDaysPermanent')
+                    : row.gift_validity_days > 0
                     ? t('admin.promo.validDaysValue', { days: row.gift_validity_days })
                     : t('admin.promo.validDaysMissing')
                 }}
@@ -212,7 +214,7 @@
           <input
             v-model.number="createForm.gift_validity_days"
             type="number"
-            min="1"
+            min="0"
             required
             class="input"
           />
@@ -301,7 +303,7 @@
           <input
             v-model.number="editForm.gift_validity_days"
             type="number"
-            min="1"
+            min="0"
             required
             class="input"
           />
@@ -566,9 +568,9 @@ const getCreditTypeLabel = (creditType?: string) => {
   return creditType === 'gift' ? t('admin.promo.creditTypeGift') : t('admin.promo.creditTypeBalance')
 }
 
-const isPositiveGiftValidityDays = (value: unknown): value is number => {
-  // 赠送余额有效期是后端必填业务字段，前端只做显式拦截，不再给默认天数。
-  return typeof value === 'number' && Number.isInteger(value) && value > 0
+const isNonNegativeGiftValidityDays = (value: unknown): value is number => {
+  // 赠送余额有效期是后端必填业务字段；0 表示永久有效，负数无效。
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0
 }
 
 // API calls
@@ -656,7 +658,7 @@ const copyToClipboard = async (text: string) => {
 
 // Create
 const handleCreate = async () => {
-  if (createForm.credit_type === 'gift' && !isPositiveGiftValidityDays(createForm.gift_validity_days)) {
+  if (createForm.credit_type === 'gift' && !isNonNegativeGiftValidityDays(createForm.gift_validity_days)) {
     appStore.showError(t('admin.promo.giftValidityDaysRequired'))
     return
   }
@@ -699,7 +701,7 @@ const handleEdit = (code: PromoCode) => {
   editForm.code = code.code
   editForm.bonus_amount = code.bonus_amount
   editForm.credit_type = code.credit_type
-  editForm.gift_validity_days = code.gift_validity_days > 0 ? code.gift_validity_days : null
+  editForm.gift_validity_days = code.gift_validity_days >= 0 ? code.gift_validity_days : null
   editForm.max_uses = code.max_uses
   editForm.status = code.status
   editForm.expires_at_str = code.expires_at ? new Date(code.expires_at).toISOString().slice(0, 16) : ''
@@ -714,7 +716,7 @@ const closeEditDialog = () => {
 
 const handleUpdate = async () => {
   if (!editingCode.value) return
-  if (editForm.credit_type === 'gift' && !isPositiveGiftValidityDays(editForm.gift_validity_days)) {
+  if (editForm.credit_type === 'gift' && !isNonNegativeGiftValidityDays(editForm.gift_validity_days)) {
     appStore.showError(t('admin.promo.giftValidityDaysRequired'))
     return
   }

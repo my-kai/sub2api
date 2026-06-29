@@ -30,18 +30,18 @@ var (
 
 // Grant records one independently expiring gift-credit allocation.
 type Grant struct {
-	ID              int64     `json:"id"`
-	UserID          int64     `json:"user_id"`
-	SourceType      string    `json:"source_type"`
-	SourceID        string    `json:"source_id"`
-	OriginalAmount  string    `json:"original_amount"`
-	RemainingAmount string    `json:"remaining_amount"`
-	ExpiresAt       time.Time `json:"expires_at"`
-	Status          string    `json:"status"`
-	Note            string    `json:"note"`
-	CreatedBy       *int64    `json:"created_by,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	ID              int64      `json:"id"`
+	UserID          int64      `json:"user_id"`
+	SourceType      string     `json:"source_type"`
+	SourceID        string     `json:"source_id"`
+	OriginalAmount  string     `json:"original_amount"`
+	RemainingAmount string     `json:"remaining_amount"`
+	ExpiresAt       *time.Time `json:"expires_at,omitempty"`
+	Status          string     `json:"status"`
+	Note            string     `json:"note"`
+	CreatedBy       *int64     `json:"created_by,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
 }
 
 // UserBalance is the O(1) aggregate used by AI request eligibility checks.
@@ -70,7 +70,7 @@ type CreateGrantInput struct {
 	SourceType string
 	SourceID   string
 	Amount     string
-	ExpiresAt  time.Time
+	ExpiresAt  *time.Time
 	Note       string
 	CreatedBy  *int64
 	CreatedAt  time.Time

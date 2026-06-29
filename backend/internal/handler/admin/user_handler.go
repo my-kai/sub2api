@@ -81,7 +81,7 @@ type UpdateBalanceRequest struct {
 	Operation        string  `json:"operation" binding:"required,oneof=set add subtract"`
 	Notes            string  `json:"notes"`
 	CreditType       string  `json:"credit_type" binding:"required,oneof=balance gift"`
-	GiftValidityDays int     `json:"gift_validity_days" binding:"omitempty,min=0"`
+	GiftValidityDays *int    `json:"gift_validity_days" binding:"omitempty,min=0"`
 }
 
 type adminBalanceOptionsUpdater interface {

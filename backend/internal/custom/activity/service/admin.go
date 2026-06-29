@@ -182,7 +182,7 @@ func validateUpsertInput(input UpsertActivityInput) error {
 	if cfg.RoundCount <= 0 || cfg.RoundDurationSeconds <= 0 || cfg.RoundIntervalSeconds < 0 {
 		return types.ErrInvalidInput
 	}
-	if cfg.GiftValidityDays <= 0 {
+	if cfg.GiftValidityDays < 0 {
 		return types.ErrInvalidInput
 	}
 	totalBudget, err := parseAmount(cfg.TotalBudget)

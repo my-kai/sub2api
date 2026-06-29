@@ -63,7 +63,7 @@ type CreatePromoCodeInput struct {
 	ExpiresAt        *time.Time
 	Notes            string
 	CreditType       string
-	GiftValidityDays int
+	GiftValidityDays *int
 }
 
 // UpdatePromoCodeInput 更新优惠码输入

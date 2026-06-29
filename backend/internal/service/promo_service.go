@@ -23,7 +23,7 @@ var (
 	ErrPromoCodeAlreadyUsed      = infraerrors.Conflict("PROMO_CODE_ALREADY_USED", "you have already used this promo code")
 	ErrPromoCodeInvalid          = infraerrors.BadRequest("PROMO_CODE_INVALID", "invalid promo code")
 	ErrPromoCreditTypeRequired   = infraerrors.BadRequest("PROMO_CREDIT_TYPE_REQUIRED", "promo code credit type must be balance or gift")
-	ErrPromoGiftValidityRequired = infraerrors.BadRequest("PROMO_GIFT_VALIDITY_REQUIRED", "gift promo code validity days must be greater than 0")
+	ErrPromoGiftValidityRequired = infraerrors.BadRequest("PROMO_GIFT_VALIDITY_REQUIRED", "gift promo code validity days is required and cannot be negative")
 )
 
 const promoMetaPrefix = "<!-- sub2api_custom_promo_meta:"
@@ -155,7 +155,7 @@ func (s *PromoService) ApplyPromoCode(ctx context.Context, userID int64, code st
 			SourceType: gifttypes.SourcePromoCode,
 			SourceID:   fmt.Sprintf("promo:%d:usage:%d", promoCode.ID, usage.ID),
 			Amount:     formatGiftAmount(promoCode.BonusAmount),
-			ExpiresAt:  usedAt.AddDate(0, 0, promoCode.GiftValidityDays),
+			ExpiresAt:  giftCreditExpiresAtFromValidityDays(usedAt, promoCode.GiftValidityDays),
 			Note:       "优惠码赠送余额",
 			CreatedAt:  usedAt,
 		}); err != nil {
@@ -225,7 +225,15 @@ func (s *PromoService) Create(ctx context.Context, input *CreatePromoCodeInput) 
 	if err != nil {
 		return nil, err
 	}
-	giftValidityDays := normalizeGiftValidityDays(input.GiftValidityDays)
+	giftValidityDays := 0
+	if creditType == creditTypeGift {
+		if input.GiftValidityDays == nil {
+			return nil, ErrPromoGiftValidityRequired
+		}
+		giftValidityDays = normalizeGiftValidityDays(*input.GiftValidityDays)
+	} else if input.GiftValidityDays != nil {
+		giftValidityDays = normalizeGiftValidityDays(*input.GiftValidityDays)
+	}
 	if err := validatePromoCreditFields(creditType, giftValidityDays); err != nil {
 		return nil, err
 	}
@@ -347,7 +355,7 @@ func (s *PromoService) ListUsages(ctx context.Context, promoCodeID int64, params
 
 type promoCodeCreditMeta struct {
 	CreditType       string `json:"credit_type,omitempty"`
-	GiftValidityDays int    `json:"gift_validity_days,omitempty"`
+	GiftValidityDays *int   `json:"gift_validity_days,omitempty"`
 }
 
 func normalizePromoCodeCreditFields(code *PromoCode) {
@@ -357,7 +365,14 @@ func normalizePromoCodeCreditFields(code *PromoCode) {
 	note, meta := parsePromoNotesMeta(code.Notes)
 	code.Notes = note
 	code.CreditType = normalizeCreditType(firstPromoMetaNonEmpty(code.CreditType, meta.CreditType))
-	code.GiftValidityDays = normalizeGiftValidityDays(firstPromoMetaPositive(code.GiftValidityDays, meta.GiftValidityDays))
+	if meta.GiftValidityDays != nil {
+		code.GiftValidityDays = normalizeGiftValidityDays(*meta.GiftValidityDays)
+	} else if code.CreditType == creditTypeGift && code.GiftValidityDays == 0 {
+		// 只有显式写入 0 才表示永久；缺少 gift_validity_days 的历史/异常 gift meta 继续按无效配置处理。
+		code.GiftValidityDays = -1
+	} else {
+		code.GiftValidityDays = normalizeGiftValidityDays(code.GiftValidityDays)
+	}
 	if code.CreditType == creditTypeBalance {
 		code.GiftValidityDays = 0
 	}
@@ -371,11 +386,11 @@ func buildPromoNotesWithMeta(note string, creditType string, giftValidityDays in
 		return "", err
 	}
 	meta := promoCodeCreditMeta{
-		CreditType:       normalizedCreditType,
-		GiftValidityDays: normalizedGiftValidityDays,
+		CreditType: normalizedCreditType,
 	}
-	if meta.CreditType == creditTypeBalance {
-		meta.GiftValidityDays = 0
+	if meta.CreditType == creditTypeGift {
+		// 0 是永久有效的显式业务值，必须写入 meta，不能被 omitempty 当作缺失。
+		meta.GiftValidityDays = &normalizedGiftValidityDays
 	}
 	payload, err := json.Marshal(meta)
 	if err != nil {
@@ -419,15 +434,6 @@ func firstPromoMetaNonEmpty(values ...string) string {
 	return ""
 }
 
-func firstPromoMetaPositive(values ...int) int {
-	for _, value := range values {
-		if value > 0 {
-			return value
-		}
-	}
-	return 0
-}
-
 func validatePromoCreditFields(creditType string, giftValidityDays int) error {
 	switch strings.TrimSpace(creditType) {
 	case creditTypeBalance:
@@ -440,7 +446,7 @@ func validatePromoCreditFields(creditType string, giftValidityDays int) error {
 }
 
 func validatePromoGiftValidityDays(days int) error {
-	if days <= 0 {
+	if days < 0 {
 		return ErrPromoGiftValidityRequired
 	}
 	return nil

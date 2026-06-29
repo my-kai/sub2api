@@ -538,7 +538,7 @@ const (
 
 var ErrRPMStatusUnavailable = infraerrors.New(http.StatusNotImplemented, "RPM_STATUS_UNAVAILABLE", "RPM cache not available")
 var ErrAdminBalanceCreditTypeRequired = infraerrors.BadRequest("ADMIN_BALANCE_CREDIT_TYPE_REQUIRED", "balance update credit type must be balance or gift")
-var ErrAdminGiftValidityRequired = infraerrors.BadRequest("ADMIN_GIFT_VALIDITY_REQUIRED", "gift credit validity days must be greater than 0")
+var ErrAdminGiftValidityRequired = infraerrors.BadRequest("ADMIN_GIFT_VALIDITY_REQUIRED", "gift credit validity days is required and cannot be negative")
 
 // adminServiceImpl implements AdminService
 type adminServiceImpl struct {
@@ -608,10 +608,18 @@ func normalizeGiftValidityDays(days int) int {
 }
 
 func validateGiftValidityDays(days int) error {
-	if days <= 0 {
+	if days < 0 {
 		return ErrAdminGiftValidityRequired
 	}
 	return nil
+}
+
+func giftCreditExpiresAtFromValidityDays(now time.Time, days int) *time.Time {
+	if days == 0 {
+		return nil
+	}
+	expiresAt := now.UTC().AddDate(0, 0, days)
+	return &expiresAt
 }
 
 func normalizeAdminRequiredCreditType(value string) (string, error) {
@@ -1133,7 +1141,7 @@ type UpdateUserBalanceInput struct {
 	Operation        string
 	Notes            string
 	CreditType       string
-	GiftValidityDays int
+	GiftValidityDays *int
 }
 
 // UpdateUserBalanceWithOptions keeps the legacy ordinary-balance path intact and adds gift grants for deposits.
@@ -1229,7 +1237,10 @@ func (s *adminServiceImpl) createAdminGiftCredit(ctx context.Context, userID int
 	}
 
 	now := time.Now().UTC()
-	validityDays := normalizeGiftValidityDays(input.GiftValidityDays)
+	if input.GiftValidityDays == nil {
+		return nil, ErrAdminGiftValidityRequired
+	}
+	validityDays := normalizeGiftValidityDays(*input.GiftValidityDays)
 	if err := validateGiftValidityDays(validityDays); err != nil {
 		return nil, err
 	}
@@ -1242,7 +1253,7 @@ func (s *adminServiceImpl) createAdminGiftCredit(ctx context.Context, userID int
 		SourceType: gifttypes.SourceAdminGrant,
 		SourceID:   "admin:" + sourceID,
 		Amount:     formatGiftAmount(input.Balance),
-		ExpiresAt:  now.AddDate(0, 0, validityDays),
+		ExpiresAt:  giftCreditExpiresAtFromValidityDays(now, validityDays),
 		Note:       defaultGiftNote(input.Notes, "管理员赠送余额"),
 		CreatedAt:  now,
 	}); err != nil {

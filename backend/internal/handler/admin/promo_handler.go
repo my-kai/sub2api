@@ -33,7 +33,7 @@ type CreatePromoCodeRequest struct {
 	ExpiresAt        *int64  `json:"expires_at"`                            // 过期时间戳（秒）
 	Notes            string  `json:"notes"`                                 // 备注
 	CreditType       string  `json:"credit_type" binding:"required,oneof=balance gift"`
-	GiftValidityDays int     `json:"gift_validity_days" binding:"omitempty,min=0"`
+	GiftValidityDays *int    `json:"gift_validity_days" binding:"omitempty,min=0"`
 }
 
 // UpdatePromoCodeRequest represents update promo code request

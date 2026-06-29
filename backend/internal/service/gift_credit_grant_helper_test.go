@@ -11,11 +11,12 @@ import (
 )
 
 func TestValidateGiftCreditGrantInputRequiresSourceID(t *testing.T) {
+	expiresAt := time.Now().UTC().Add(time.Hour)
 	err := validateGiftCreditGrantInput(gifttypes.CreateGrantInput{
 		UserID:     7,
 		SourceType: gifttypes.SourcePromoCode,
 		Amount:     "1.00000000",
-		ExpiresAt:  time.Now().UTC().Add(time.Hour),
+		ExpiresAt:  &expiresAt,
 		CreatedAt:  time.Now().UTC(),
 	})
 
@@ -29,7 +30,7 @@ func TestValidateGiftCreditGrantInputAcceptsExplicitSourceID(t *testing.T) {
 		SourceType: gifttypes.SourcePromoCode,
 		SourceID:   "promo:1:usage:2",
 		Amount:     "1.00000000",
-		ExpiresAt:  now.Add(time.Hour),
+		ExpiresAt:  ptrGiftGrantTime(now.Add(time.Hour)),
 		CreatedAt:  now,
 	})
 
@@ -43,9 +44,26 @@ func TestValidateGiftCreditGrantInputRejectsNonPositiveAmount(t *testing.T) {
 		SourceType: gifttypes.SourcePromoCode,
 		SourceID:   "promo:1:usage:2",
 		Amount:     "0.00000000",
-		ExpiresAt:  now.Add(time.Hour),
+		ExpiresAt:  ptrGiftGrantTime(now.Add(time.Hour)),
 		CreatedAt:  now,
 	})
 
 	require.ErrorIs(t, err, gifttypes.ErrInvalidInput)
+}
+
+func TestValidateGiftCreditGrantInputAcceptsPermanentExpiry(t *testing.T) {
+	now := time.Now().UTC()
+	err := validateGiftCreditGrantInput(gifttypes.CreateGrantInput{
+		UserID:     7,
+		SourceType: gifttypes.SourcePromoCode,
+		SourceID:   "promo:1:usage:2",
+		Amount:     "1.00000000",
+		CreatedAt:  now,
+	})
+
+	require.NoError(t, err)
+}
+
+func ptrGiftGrantTime(value time.Time) *time.Time {
+	return &value
 }

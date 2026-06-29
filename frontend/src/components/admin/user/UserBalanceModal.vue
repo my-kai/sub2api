@@ -18,7 +18,7 @@
       </div>
       <div v-if="operation === 'add' && form.creditType === 'gift'">
         <label class="input-label">{{ t('admin.users.giftValidityDays') }}</label>
-        <input v-model.number="form.giftValidityDays" type="number" min="1" required class="input" />
+        <input v-model.number="form.giftValidityDays" type="number" min="0" required class="input" />
       </div>
       <div><label class="input-label">{{ t('admin.users.notes') }}</label><textarea v-model="form.notes" rows="3" class="input"></textarea></div>
       <div v-if="form.amount > 0" class="rounded-xl border border-blue-200 bg-blue-50 p-4 dark:border-blue-800 dark:bg-blue-950"><div class="flex items-center justify-between text-sm"><span class="text-gray-700 dark:text-gray-300">{{ t('admin.users.newBalance') }}:</span><span class="font-bold text-gray-900 dark:text-gray-100">${{ formatBalance(calculateNewBalance()) }}</span></div></div>
@@ -87,7 +87,7 @@ const handleBalanceSubmit = async () => {
     appStore.showError(t('admin.users.insufficientBalance'))
     return
   }
-  if (props.operation === 'add' && form.creditType === 'gift' && !isPositiveGiftValidityDays(form.giftValidityDays)) {
+  if (props.operation === 'add' && form.creditType === 'gift' && !isNonNegativeGiftValidityDays(form.giftValidityDays)) {
     appStore.showError(t('admin.users.giftValidityDaysRequired'))
     return
   }
@@ -104,8 +104,8 @@ const handleBalanceSubmit = async () => {
   } finally { submitting.value = false }
 }
 
-const isPositiveGiftValidityDays = (value: unknown): value is number => {
-  // 赠送余额有效期必须由管理员显式填写，不能用默认天数代替配置。
-  return typeof value === 'number' && Number.isInteger(value) && value > 0
+const isNonNegativeGiftValidityDays = (value: unknown): value is number => {
+  // 赠送余额有效期必须显式填写；0 表示永久有效，负数无效。
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0
 }
 </script>

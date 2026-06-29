@@ -447,7 +447,7 @@ type ValidatePromoCodeResponse struct {
 	Valid            bool    `json:"valid"`
 	BonusAmount      float64 `json:"bonus_amount,omitempty"`
 	CreditType       string  `json:"credit_type,omitempty"`
-	GiftValidityDays int     `json:"gift_validity_days,omitempty"`
+	GiftValidityDays *int    `json:"gift_validity_days,omitempty"`
 	ErrorCode        string  `json:"error_code,omitempty"`
 	Message          string  `json:"message,omitempty"`
 }
@@ -504,12 +504,16 @@ func (h *AuthHandler) ValidatePromoCode(c *gin.Context) {
 		return
 	}
 
-	response.Success(c, ValidatePromoCodeResponse{
-		Valid:            true,
-		BonusAmount:      promoCode.BonusAmount,
-		CreditType:       promoCode.CreditType,
-		GiftValidityDays: promoCode.GiftValidityDays,
-	})
+	resp := ValidatePromoCodeResponse{
+		Valid:       true,
+		BonusAmount: promoCode.BonusAmount,
+		CreditType:  promoCode.CreditType,
+	}
+	if promoCode.CreditType == "gift" {
+		giftValidityDays := promoCode.GiftValidityDays
+		resp.GiftValidityDays = &giftValidityDays
+	}
+	response.Success(c, resp)
 }
 
 // ValidateInvitationCodeRequest 验证邀请码请求

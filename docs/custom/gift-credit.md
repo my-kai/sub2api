@@ -19,8 +19,10 @@
 
 - 赠送余额基础表：`backend/migrations/custom/giftcredit/001_gift_credit.sql`。
 - 赠送余额来源约束：`backend/migrations/custom/giftcredit/002_require_grant_source_id.sql`。
+- 赠送余额永久有效支持：`backend/migrations/custom/giftcredit/003_allow_permanent_gift_credit.sql`。
 - 活动配置补充有效期字段：`backend/migrations/custom/activity/003_custom_activity_gift_credit_validity.sql`。
 - 活动配置显式有效期约束：`backend/migrations/custom/activity/004_remove_gift_validity_default.sql`。
+- 活动赠送永久有效支持：`backend/migrations/custom/activity/005_allow_permanent_gift_credit_validity.sql`。
 - custom 迁移独立于主仓 `backend/migrations/**`，避免和上游迁移编号冲突。
 
 ## 来源
@@ -37,21 +39,27 @@
   - `balance`：进入普通余额，沿用原余额增加逻辑。
   - `gift`：进入赠送余额，生成独立 grant。
 - `gift` 只支持增加余额，不支持扣减；扣减仍只能走普通余额原逻辑。
-- 选择 `gift` 时必须显式传入大于 0 的 `gift_validity_days`；未传或传 0 会直接失败，不做默认有效期。
+- 选择 `gift` 时必须显式传入 `gift_validity_days`；正数表示有效天数，`0` 表示永久有效，负数或未传会直接失败，不做默认有效期。
 
 ### 优惠码
 
 - 优惠码新增和编辑支持 `credit_type`：
   - `balance`：兑换后进入普通余额。
   - `gift`：兑换后进入赠送余额。
-- `credit_type=gift` 时必须显式传入大于 0 的 `gift_validity_days`，并用它计算 grant 过期时间。
+- `credit_type=gift` 时必须显式传入 `gift_validity_days`；正数用来计算 grant 过期时间，`0` 生成永久 grant，负数或未传会直接失败。
 - 为避免修改主仓优惠码表结构，优惠码额度类型元数据暂存于 `notes` 的 HTML comment 中；前端展示时会剥离这段元数据。
 
 ### 红包雨活动
 
 - 红包雨领取奖励进入赠送余额，不再直接增加普通余额。
-- 活动配置新增 `gift_validity_days`，用于控制每次领取生成 grant 的过期时间。
+- 活动配置新增 `gift_validity_days`，用于控制每次领取生成 grant 的过期时间；`0` 表示永久有效，负数无效。
 - 历史普通余额不迁移；新领取记录按赠送余额规则生效。
+
+## 过期语义
+
+- `expires_at IS NULL` 表示该笔赠送余额永久有效。
+- `expires_at > now()` 的 grant 可用于抵扣。
+- 过期刷新只处理 `expires_at IS NOT NULL` 的 grant，永久 grant 不会被标记过期。
 
 ## 性能约束
 

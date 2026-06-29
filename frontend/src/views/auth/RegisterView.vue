@@ -429,6 +429,9 @@ const promoValidMessage = computed(() => {
     if (promoValidation.giftValidityDays === null) {
       return ''
     }
+    if (promoValidation.giftValidityDays === 0) {
+      return t('auth.promoCodeValidGiftPermanent', { amount })
+    }
     return t('auth.promoCodeValidGift', {
       amount,
       days: promoValidation.giftValidityDays
@@ -637,7 +640,7 @@ async function validatePromoCodeDebounced(code: string): Promise<void> {
       const giftValidityDays = typeof result.gift_validity_days === 'number' ? result.gift_validity_days : null
       const giftValidityInvalid =
         creditType === 'gift' &&
-        (giftValidityDays === null || !Number.isInteger(giftValidityDays) || giftValidityDays <= 0)
+        (giftValidityDays === null || !Number.isInteger(giftValidityDays) || giftValidityDays < 0)
       if (creditType === null || bonusAmount === null || giftValidityInvalid) {
         promoValidation.valid = false
         promoValidation.invalid = true

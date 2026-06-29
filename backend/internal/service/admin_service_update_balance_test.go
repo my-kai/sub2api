@@ -132,7 +132,27 @@ func TestAdminService_UpdateUserBalanceGiftRequiresValidityDays(t *testing.T) {
 		Operation:  "add",
 		CreditType: "gift",
 	})
-	require.ErrorContains(t, err, "gift credit validity days must be greater than 0")
+	require.ErrorContains(t, err, "gift credit validity days is required and cannot be negative")
+	require.Empty(t, creator.inputs)
+}
+
+func TestAdminService_UpdateUserBalanceGiftRejectsNegativeValidityDays(t *testing.T) {
+	baseRepo := &userRepoStub{user: &User{ID: 7, Balance: 10}}
+	repo := &balanceUserRepoStub{userRepoStub: baseRepo}
+	creator := &giftCreditGrantCreatorStub{}
+	svc := &adminServiceImpl{
+		userRepo:               repo,
+		giftCreditGrantCreator: creator,
+	}
+
+	validityDays := -1
+	_, err := svc.UpdateUserBalanceWithOptions(context.Background(), 7, UpdateUserBalanceInput{
+		Balance:          5,
+		Operation:        "add",
+		CreditType:       "gift",
+		GiftValidityDays: &validityDays,
+	})
+	require.ErrorIs(t, err, ErrAdminGiftValidityRequired)
 	require.Empty(t, creator.inputs)
 }
 
@@ -157,6 +177,7 @@ func TestAdminService_UpdateUserBalanceGiftCreatesGrantWithExplicitValidity(t *t
 	redeemRepo := &balanceRedeemRepoStub{redeemRepoStub: &redeemRepoStub{}}
 	creator := &giftCreditGrantCreatorStub{}
 	invalidator := &authCacheInvalidatorStub{}
+	validityDays := 3
 	svc := &adminServiceImpl{
 		userRepo:               repo,
 		redeemCodeRepo:         redeemRepo,
@@ -169,7 +190,7 @@ func TestAdminService_UpdateUserBalanceGiftCreatesGrantWithExplicitValidity(t *t
 		Balance:          5,
 		Operation:        "add",
 		CreditType:       "gift",
-		GiftValidityDays: 3,
+		GiftValidityDays: &validityDays,
 		Notes:            "manual gift",
 	})
 	require.NoError(t, err)
@@ -177,7 +198,31 @@ func TestAdminService_UpdateUserBalanceGiftCreatesGrantWithExplicitValidity(t *t
 	require.Len(t, creator.inputs, 1)
 	require.Equal(t, gifttypes.SourceAdminGrant, creator.inputs[0].SourceType)
 	require.Equal(t, "5.00000000", creator.inputs[0].Amount)
-	require.WithinDuration(t, before.AddDate(0, 0, 3), creator.inputs[0].ExpiresAt, 2*time.Second)
+	require.NotNil(t, creator.inputs[0].ExpiresAt)
+	require.WithinDuration(t, before.AddDate(0, 0, 3), *creator.inputs[0].ExpiresAt, 2*time.Second)
 	require.Equal(t, []int64{7}, invalidator.userIDs)
 	require.Len(t, redeemRepo.created, 1)
+}
+
+func TestAdminService_UpdateUserBalanceGiftCreatesPermanentGrantWithZeroValidity(t *testing.T) {
+	baseRepo := &userRepoStub{user: &User{ID: 7, Balance: 10}}
+	repo := &balanceUserRepoStub{userRepoStub: baseRepo}
+	redeemRepo := &balanceRedeemRepoStub{redeemRepoStub: &redeemRepoStub{}}
+	creator := &giftCreditGrantCreatorStub{}
+	svc := &adminServiceImpl{
+		userRepo:               repo,
+		redeemCodeRepo:         redeemRepo,
+		giftCreditGrantCreator: creator,
+	}
+
+	validityDays := 0
+	_, err := svc.UpdateUserBalanceWithOptions(context.Background(), 7, UpdateUserBalanceInput{
+		Balance:          5,
+		Operation:        "add",
+		CreditType:       "gift",
+		GiftValidityDays: &validityDays,
+	})
+	require.NoError(t, err)
+	require.Len(t, creator.inputs, 1)
+	require.Nil(t, creator.inputs[0].ExpiresAt)
 }

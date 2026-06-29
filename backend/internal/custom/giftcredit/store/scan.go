@@ -20,6 +20,7 @@ func grantColumns() string {
 func scanGrant(row scanRow) (types.Grant, error) {
 	var grant types.Grant
 	var createdBy sql.NullInt64
+	var expiresAt sql.NullTime
 	if err := row.Scan(
 		&grant.ID,
 		&grant.UserID,
@@ -27,7 +28,7 @@ func scanGrant(row scanRow) (types.Grant, error) {
 		&grant.SourceID,
 		&grant.OriginalAmount,
 		&grant.RemainingAmount,
-		&grant.ExpiresAt,
+		&expiresAt,
 		&grant.Status,
 		&grant.Note,
 		&createdBy,
@@ -38,6 +39,10 @@ func scanGrant(row scanRow) (types.Grant, error) {
 	}
 	if createdBy.Valid {
 		grant.CreatedBy = &createdBy.Int64
+	}
+	if expiresAt.Valid {
+		expiresAtUTC := expiresAt.Time.UTC()
+		grant.ExpiresAt = &expiresAtUTC
 	}
 	grant.OriginalAmount = normalizeAmount(grant.OriginalAmount)
 	grant.RemainingAmount = normalizeAmount(grant.RemainingAmount)
