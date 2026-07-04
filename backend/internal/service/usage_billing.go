@@ -117,10 +117,11 @@ type UsageBillingApplyResult struct {
 	// GiftDeducted is the part of BalanceCost consumed by expiring gift credit.
 	GiftDeducted float64
 	// BalanceDeducted is the part of BalanceCost still charged to users.balance.
-	BalanceDeducted float64
-	NewBalance      *float64 // post-deduction ordinary balance (nil = no ordinary balance deduction)
-	NewGiftBalance  *float64 // post-deduction gift balance (nil = no gift credit deduction)
-	QuotaState      *AccountQuotaState
+	BalanceDeducted    float64
+	NewBalance         *float64           // post-deduction ordinary balance (nil = no ordinary balance deduction)
+	NewGiftBalance     *float64           // post-deduction gift balance (nil = no gift credit deduction)
+	BalanceOverdrafted bool               // true when the sufficient-balance guard missed and debt was still recorded
+	QuotaState         *AccountQuotaState // post-increment quota state (nil = no quota increment)
 }
 
 type UsageBillingRepository interface {
