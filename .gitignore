@@ -136,6 +136,7 @@ docs/*
 docs/custom/*
 !docs/custom/announcements.md
 !docs/custom/gift-credit.md
+!docs/custom/invoice.md
 !docs/PAYMENT.md
 !docs/PAYMENT_CN.md
 !docs/ADMIN_PAYMENT_INTEGRATION_API.md

@@ -11,6 +11,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	customactivityruntime "github.com/Wei-Shaw/sub2api/internal/custom/activity/runtime"
 	customcallbackauth "github.com/Wei-Shaw/sub2api/internal/custom/callbackauth"
+	custominvoice "github.com/Wei-Shaw/sub2api/internal/custom/invoice"
 	customoauthapp "github.com/Wei-Shaw/sub2api/internal/custom/oauthapp"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/websearch"
@@ -43,6 +44,7 @@ func ProvideRouter(
 	redisClient *redis.Client,
 	customActivity *customactivityruntime.Bundle,
 	customCallbackAuth *customcallbackauth.Bundle,
+	customInvoice *custominvoice.Bundle,
 	customOAuthApp *customoauthapp.Bundle,
 ) *gin.Engine {
 	if cfg.Server.Mode == "release" {
@@ -100,7 +102,7 @@ func ProvideRouter(
 		service.SetWebSearchManager(websearch.NewManager(configs, redisClient))
 	})
 
-	return SetupRouter(r, handlers, jwtAuth, adminAuth, apiKeyAuth, apiKeyService, subscriptionService, opsService, settingService, cfg, redisClient, customActivity, customCallbackAuth, customOAuthApp)
+	return SetupRouter(r, handlers, jwtAuth, adminAuth, apiKeyAuth, apiKeyService, subscriptionService, opsService, settingService, cfg, redisClient, customActivity, customCallbackAuth, customInvoice, customOAuthApp)
 }
 
 // ProvideHTTPServer 提供 HTTP 服务器

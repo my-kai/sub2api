@@ -27,6 +27,8 @@ const (
 	NotificationEmailEventSubscriptionExpiryReminder  = "subscription.expiry_reminder"
 	NotificationEmailEventBalanceLow                  = "balance.low"
 	NotificationEmailEventBalanceRechargeSuccess      = "balance.recharge_success"
+	NotificationEmailEventInvoiceIssuedAttachment     = "invoice.issued_attachment"
+	NotificationEmailEventInvoiceIssuedLink           = "invoice.issued_link"
 	NotificationEmailEventAccountQuotaAlert           = "account.quota_alert"
 	NotificationEmailEventContentModerationViolation  = "content_moderation.violation_notice"
 	NotificationEmailEventContentModerationDisabled   = "content_moderation.account_disabled"
@@ -345,6 +347,33 @@ func (s *NotificationEmailService) PreviewTemplate(ctx context.Context, input No
 		variables[key] = value
 	}
 	return renderNotificationEmail(normalizedEvent, subject, htmlBody, variables, nil)
+}
+
+// Render builds a notification email subject and HTML from the configured template.
+//
+// It does not send the email or write delivery markers, so callers that need a
+// custom delivery path such as MIME attachments can still share the same
+// official/custom template definitions used by normal notification emails.
+func (s *NotificationEmailService) Render(ctx context.Context, input NotificationEmailSendInput) (NotificationEmailPreview, error) {
+	_, normalizedEvent, err := s.eventInfo(input.Event)
+	if err != nil {
+		return NotificationEmailPreview{}, notificationEmailTemplateErr(err)
+	}
+	recipient := strings.TrimSpace(input.RecipientEmail)
+	locale := normalizeNotificationLocale(input.Locale)
+	if strings.TrimSpace(input.Locale) == "" {
+		locale = s.ResolveRecipientLocale(ctx, input.UserID, recipient)
+	}
+	tmpl, err := s.GetTemplate(ctx, normalizedEvent, locale)
+	if err != nil {
+		return NotificationEmailPreview{}, notificationEmailTemplateErr(err)
+	}
+	variables := s.runtimeVariables(ctx, normalizedEvent, locale, input)
+	rendered, err := renderNotificationEmail(normalizedEvent, tmpl.Subject, tmpl.HTML, variables, input.RawHTMLVariables)
+	if err != nil {
+		return NotificationEmailPreview{}, notificationEmailTemplateErr(err)
+	}
+	return rendered, nil
 }
 
 func (s *NotificationEmailService) Send(ctx context.Context, input NotificationEmailSendInput) error {
@@ -860,6 +889,13 @@ func notificationEmailSampleVariables(locale string) map[string]string {
 			"recharge_url":        "https://example.com/recharge",
 			"recharge_amount":     "50.00",
 			"order_id":            "1024",
+			"application_no":      "INV20260705-K7Q9M2X4PA",
+			"invoice_number":      "FP202607050001",
+			"company_title":       "示例科技有限公司",
+			"invoice_amount":      "50.00",
+			"invoice_currency":    "CNY",
+			"download_url":        "https://example.com/api/v1/custom/invoice-downloads/preview",
+			"link_expires_at":     "2026-07-06 10:00:00",
 			"unsubscribe_url":     "https://example.com/unsubscribe",
 			"account_id":          "1001",
 			"account_name":        "openai-main",
@@ -906,6 +942,13 @@ func notificationEmailSampleVariables(locale string) map[string]string {
 		"recharge_url":        "https://example.com/recharge",
 		"recharge_amount":     "50.00",
 		"order_id":            "1024",
+		"application_no":      "INV20260705-K7Q9M2X4PA",
+		"invoice_number":      "FP202607050001",
+		"company_title":       "Example Technology LLC",
+		"invoice_amount":      "50.00",
+		"invoice_currency":    "CNY",
+		"download_url":        "https://example.com/api/v1/custom/invoice-downloads/preview",
+		"link_expires_at":     "2026-07-06 10:00:00",
 		"unsubscribe_url":     "https://example.com/unsubscribe",
 		"account_id":          "1001",
 		"account_name":        "openai-main",
@@ -945,6 +988,8 @@ var notificationEmailEventOrder = []string{
 	NotificationEmailEventSubscriptionExpiryReminder,
 	NotificationEmailEventBalanceLow,
 	NotificationEmailEventBalanceRechargeSuccess,
+	NotificationEmailEventInvoiceIssuedAttachment,
+	NotificationEmailEventInvoiceIssuedLink,
 	NotificationEmailEventAccountQuotaAlert,
 	NotificationEmailEventContentModerationViolation,
 	NotificationEmailEventContentModerationDisabled,
@@ -1009,6 +1054,24 @@ var notificationEmailEventDefinitions = map[string]NotificationEmailEventInfo{
 		Category:     "billing",
 		Optional:     false,
 		Placeholders: append(append([]string{}, notificationEmailCommonPlaceholders...), "recharge_amount", "current_balance", "order_id"),
+	},
+	NotificationEmailEventInvoiceIssuedAttachment: {
+		Event:       NotificationEmailEventInvoiceIssuedAttachment,
+		Label:       "Invoice issued with attachment",
+		Description: "Sent after an invoice application is issued and the PDF can be attached directly.",
+		Category:    "billing",
+		Optional:    false,
+		Placeholders: append(append([]string{}, notificationEmailCommonPlaceholders...),
+			"application_no", "invoice_number", "company_title", "invoice_amount", "invoice_currency"),
+	},
+	NotificationEmailEventInvoiceIssuedLink: {
+		Event:       NotificationEmailEventInvoiceIssuedLink,
+		Label:       "Invoice issued with download link",
+		Description: "Sent after an invoice application is issued when the PDF attachment path is unavailable.",
+		Category:    "billing",
+		Optional:    false,
+		Placeholders: append(append([]string{}, notificationEmailCommonPlaceholders...),
+			"application_no", "invoice_number", "company_title", "invoice_amount", "invoice_currency", "download_url", "link_expires_at"),
 	},
 	NotificationEmailEventAccountQuotaAlert: {
 		Event:       NotificationEmailEventAccountQuotaAlert,
@@ -1202,6 +1265,60 @@ var notificationEmailOfficialTemplates = map[string]map[string]notificationEmail
 <p>您的余额充值 <strong>${{recharge_amount}}</strong> 已完成。</p>
 <p>当前余额：<strong>${{current_balance}}</strong></p>
 			<p>订单号：{{order_id}}</p>`),
+		},
+	},
+	NotificationEmailEventInvoiceIssuedAttachment: {
+		notificationEmailDefaultLocale: {
+			Subject: "[{{site_name}}] Invoice issued - {{application_no}}",
+			HTML: notificationEmailCard("#2563eb", "Invoice issued", `
+	<p>Your invoice application has been completed. The invoice PDF is attached to this email.</p>
+	<table style="width:100%;border-collapse:collapse;">
+	  <tr><td>Application No.</td><td>{{application_no}}</td></tr>
+	  <tr><td>Invoice No.</td><td>{{invoice_number}}</td></tr>
+	  <tr><td>Company title</td><td>{{company_title}}</td></tr>
+	  <tr><td>Amount</td><td>{{invoice_amount}} {{invoice_currency}}</td></tr>
+	</table>`),
+		},
+		notificationEmailLocaleChinese: {
+			Subject: "[{{site_name}}] 开票完成通知 - {{application_no}}",
+			HTML: notificationEmailCard("#2563eb", "开票完成", `
+	<p>您的开票申请已完成，发票文件见附件。</p>
+	<table style="width:100%;border-collapse:collapse;">
+	  <tr><td>申请编号</td><td>{{application_no}}</td></tr>
+	  <tr><td>发票号码</td><td>{{invoice_number}}</td></tr>
+	  <tr><td>公司抬头</td><td>{{company_title}}</td></tr>
+	  <tr><td>金额</td><td>{{invoice_amount}} {{invoice_currency}}</td></tr>
+	</table>`),
+		},
+	},
+	NotificationEmailEventInvoiceIssuedLink: {
+		notificationEmailDefaultLocale: {
+			Subject: "[{{site_name}}] Invoice issued - {{application_no}}",
+			HTML: notificationEmailCard("#2563eb", "Invoice issued", `
+	<p>Your invoice application has been completed. Please download the invoice PDF from the link below.</p>
+	<p><a class="button" href="{{download_url}}">Download invoice</a></p>
+	<table style="width:100%;border-collapse:collapse;">
+	  <tr><td>Application No.</td><td>{{application_no}}</td></tr>
+	  <tr><td>Invoice No.</td><td>{{invoice_number}}</td></tr>
+	  <tr><td>Company title</td><td>{{company_title}}</td></tr>
+	  <tr><td>Amount</td><td>{{invoice_amount}} {{invoice_currency}}</td></tr>
+	  <tr><td>Link expires at</td><td>{{link_expires_at}}</td></tr>
+	</table>
+	<p class="muted">If the button does not work, copy this link into your browser:<br>{{download_url}}</p>`),
+		},
+		notificationEmailLocaleChinese: {
+			Subject: "[{{site_name}}] 开票完成通知 - {{application_no}}",
+			HTML: notificationEmailCard("#2563eb", "开票完成", `
+	<p>您的开票申请已完成，请通过下方链接下载发票文件。</p>
+	<p><a class="button" href="{{download_url}}">下载发票</a></p>
+	<table style="width:100%;border-collapse:collapse;">
+	  <tr><td>申请编号</td><td>{{application_no}}</td></tr>
+	  <tr><td>发票号码</td><td>{{invoice_number}}</td></tr>
+	  <tr><td>公司抬头</td><td>{{company_title}}</td></tr>
+	  <tr><td>金额</td><td>{{invoice_amount}} {{invoice_currency}}</td></tr>
+	  <tr><td>链接有效期</td><td>{{link_expires_at}}</td></tr>
+	</table>
+	<p class="muted">如果按钮无法点击，请复制以下链接到浏览器中打开：<br>{{download_url}}</p>`),
 		},
 	},
 	NotificationEmailEventAccountQuotaAlert: {

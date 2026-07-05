@@ -13,6 +13,7 @@ import (
 	customactivityruntime "github.com/Wei-Shaw/sub2api/internal/custom/activity/runtime"
 	customcallbackauth "github.com/Wei-Shaw/sub2api/internal/custom/callbackauth"
 	customgiftcreditruntime "github.com/Wei-Shaw/sub2api/internal/custom/giftcredit/runtime"
+	custominvoice "github.com/Wei-Shaw/sub2api/internal/custom/invoice"
 	customoauthapp "github.com/Wei-Shaw/sub2api/internal/custom/oauthapp"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/handler/admin"
@@ -298,11 +299,15 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	if err != nil {
 		return nil, err
 	}
+	invoiceBundle, err := custominvoice.ProvideBundleWithEmail(db, configConfig.Pricing.DataDir, emailService, configConfig.Server.FrontendURL, configConfig.JWT.Secret)
+	if err != nil {
+		return nil, err
+	}
 	oauthAppBundle, err := customoauthapp.ProvideBundle(db, userService, authService)
 	if err != nil {
 		return nil, err
 	}
-	engine := server.ProvideRouter(configConfig, handlers, jwtAuthMiddleware, adminAuthMiddleware, apiKeyAuthMiddleware, apiKeyService, subscriptionService, opsService, settingService, redisClient, activityBundle, callbackAuthBundle, oauthAppBundle)
+	engine := server.ProvideRouter(configConfig, handlers, jwtAuthMiddleware, adminAuthMiddleware, apiKeyAuthMiddleware, apiKeyService, subscriptionService, opsService, settingService, redisClient, activityBundle, callbackAuthBundle, invoiceBundle, oauthAppBundle)
 	httpServer := server.ProvideHTTPServer(configConfig, engine)
 	opsMetricsCollector := service.ProvideOpsMetricsCollector(opsRepository, settingRepository, accountRepository, concurrencyService, db, redisClient, configConfig)
 	opsAggregationService := service.ProvideOpsAggregationService(opsRepository, settingRepository, db, redisClient, configConfig)

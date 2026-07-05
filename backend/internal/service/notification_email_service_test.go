@@ -137,6 +137,8 @@ func TestNotificationEmailAdditionalEventsAreListedAndPreviewable(t *testing.T) 
 		placeholder string
 	}{
 		{NotificationEmailEventNotificationEmailVerifyCode, "verification_code"},
+		{NotificationEmailEventInvoiceIssuedAttachment, "application_no"},
+		{NotificationEmailEventInvoiceIssuedLink, "download_url"},
 		{NotificationEmailEventAccountQuotaAlert, "account_name"},
 		{NotificationEmailEventContentModerationViolation, "moderation_category"},
 		{NotificationEmailEventContentModerationDisabled, "violation_count"},
@@ -156,6 +158,32 @@ func TestNotificationEmailAdditionalEventsAreListedAndPreviewable(t *testing.T) 
 		require.NotEmpty(t, preview.Subject)
 		require.NotEmpty(t, preview.HTML)
 	}
+}
+
+func TestNotificationEmailRenderInvoiceIssuedLinkTemplate(t *testing.T) {
+	ctx := context.Background()
+	svc := NewNotificationEmailService(newNotificationEmailMemorySettingRepo(), nil)
+
+	rendered, err := svc.Render(ctx, NotificationEmailSendInput{
+		Event:          NotificationEmailEventInvoiceIssuedLink,
+		Locale:         "zh-CN",
+		RecipientEmail: "invoice@example.com",
+		RecipientName:  "示例科技有限公司",
+		Variables: map[string]string{
+			"application_no":   "INV20260705-K7Q9M2X4PA",
+			"invoice_number":   "FP202607050001",
+			"company_title":    "示例科技有限公司",
+			"invoice_amount":   "50.00",
+			"invoice_currency": "CNY",
+			"download_url":     "https://api.example.com/api/v1/custom/invoice-downloads/token",
+			"link_expires_at":  "2026-07-06 10:00:00",
+		},
+	})
+	require.NoError(t, err)
+	require.Contains(t, rendered.Subject, "开票完成通知")
+	require.Contains(t, rendered.HTML, "INV20260705-K7Q9M2X4PA")
+	require.Contains(t, rendered.HTML, "下载发票")
+	require.Contains(t, rendered.HTML, "https://api.example.com/api/v1/custom/invoice-downloads/token")
 }
 
 func TestNotificationEmailRawHTMLVariablesAreTrustedOnlyForHTMLPlaceholders(t *testing.T) {
@@ -218,6 +246,23 @@ func TestEmailQueueTasksPreserveLocaleHints(t *testing.T) {
 	resetTask := <-queue.taskChan
 	require.Equal(t, TaskTypePasswordReset, resetTask.TaskType)
 	require.Equal(t, "en-US", resetTask.Locale)
+}
+
+func TestBuildEmailWithAttachmentMessageIncludesPDFPart(t *testing.T) {
+	msg, err := buildEmailWithAttachmentMessage(
+		"Sub2API <noreply@example.com>",
+		"user@example.com",
+		"开票完成",
+		"<p>发票见附件</p>",
+		EmailAttachment{Filename: "invoice.pdf", ContentType: "application/pdf", Data: []byte("%PDF-1.4\nbody")},
+	)
+	require.NoError(t, err)
+	raw := string(msg)
+	require.Contains(t, raw, "Content-Type: multipart/mixed")
+	require.Contains(t, raw, "Content-Type: application/pdf")
+	require.Contains(t, raw, `filename=invoice.pdf`)
+	require.Contains(t, raw, "Content-Transfer-Encoding: base64")
+	require.Contains(t, raw, "JVBERi0xLjQK")
 }
 
 func TestOpsScheduledReportDeliverySourceIDIncludesReportIdentity(t *testing.T) {

@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"log"
 	"net/http"
 	"sync"
@@ -15,6 +16,7 @@ import (
 	customactivityruntime "github.com/Wei-Shaw/sub2api/internal/custom/activity/runtime"
 	customcallbackauth "github.com/Wei-Shaw/sub2api/internal/custom/callbackauth"
 	customgiftcreditruntime "github.com/Wei-Shaw/sub2api/internal/custom/giftcredit/runtime"
+	custominvoice "github.com/Wei-Shaw/sub2api/internal/custom/invoice"
 	customoauthapp "github.com/Wei-Shaw/sub2api/internal/custom/oauthapp"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/payment"
@@ -46,6 +48,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 		customactivityruntime.ProvideBundleWithMainDeps,
 		customcallbackauth.ProvideBundle,
 		customgiftcreditruntime.ProvideBundleFromEnv,
+		provideInvoiceBundle,
 		customoauthapp.ProvideBundle,
 
 		// Server layer ProviderSet
@@ -64,6 +67,10 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 		wire.Struct(new(Application), "Server", "Cleanup"),
 	)
 	return nil, nil
+}
+
+func provideInvoiceBundle(db *sql.DB, cfg *config.Config, emailService *service.EmailService) (*custominvoice.Bundle, error) {
+	return custominvoice.ProvideBundleWithEmail(db, cfg.Pricing.DataDir, emailService, cfg.Server.FrontendURL, cfg.JWT.Secret)
 }
 
 func providePrivacyClientFactory() service.PrivacyClientFactory {

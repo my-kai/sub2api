@@ -14,6 +14,8 @@ import (
 	customannouncementroutes "github.com/Wei-Shaw/sub2api/internal/custom/announcements/routes"
 	customcallbackauth "github.com/Wei-Shaw/sub2api/internal/custom/callbackauth"
 	customcallbackauthroutes "github.com/Wei-Shaw/sub2api/internal/custom/callbackauth/routes"
+	custominvoice "github.com/Wei-Shaw/sub2api/internal/custom/invoice"
+	custominvoiceroutes "github.com/Wei-Shaw/sub2api/internal/custom/invoice/routes"
 	customoauthapp "github.com/Wei-Shaw/sub2api/internal/custom/oauthapp"
 	customoauthapproutes "github.com/Wei-Shaw/sub2api/internal/custom/oauthapp/routes"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
@@ -43,6 +45,7 @@ func SetupRouter(
 	redisClient *redis.Client,
 	customActivity *customactivityruntime.Bundle,
 	customCallbackAuth *customcallbackauth.Bundle,
+	customInvoice *custominvoice.Bundle,
 	customOAuthApp *customoauthapp.Bundle,
 ) *gin.Engine {
 	// 缓存 iframe 页面的 origin 列表，用于动态注入 CSP frame-src
@@ -93,7 +96,7 @@ func SetupRouter(
 	}
 
 	// 注册路由
-	registerRoutes(r, handlers, jwtAuth, adminAuth, apiKeyAuth, apiKeyService, subscriptionService, opsService, settingService, cfg, redisClient, customActivity, customCallbackAuth, customOAuthApp)
+	registerRoutes(r, handlers, jwtAuth, adminAuth, apiKeyAuth, apiKeyService, subscriptionService, opsService, settingService, cfg, redisClient, customActivity, customCallbackAuth, customInvoice, customOAuthApp)
 
 	return r
 }
@@ -113,6 +116,7 @@ func registerRoutes(
 	redisClient *redis.Client,
 	customActivity *customactivityruntime.Bundle,
 	customCallbackAuth *customcallbackauth.Bundle,
+	customInvoice *custominvoice.Bundle,
 	customOAuthApp *customoauthapp.Bundle,
 ) {
 	// 通用路由（健康检查、状态等）
@@ -129,10 +133,39 @@ func registerRoutes(
 	routes.RegisterPaymentRoutes(v1, h.Payment, h.PaymentWebhook, h.Admin.Payment, jwtAuth, adminAuth, settingService)
 	registerCustomAnnouncementRoutes(v1, cfg.Pricing.DataDir, adminAuth, settingService)
 	registerCustomCallbackAuthRoutes(v1, customCallbackAuth, jwtAuth, settingService)
+	registerCustomInvoiceRoutes(v1, customInvoice, jwtAuth, adminAuth, settingService)
 	registerCustomOAuthApplicationRoutes(v1, customOAuthApp, jwtAuth, adminAuth, settingService)
 	registerCustomActivityRoutes(v1, customActivity, jwtAuth, adminAuth, settingService)
 
 	handler.RegisterPageRoutes(v1, cfg.Pricing.DataDir, gin.HandlerFunc(jwtAuth), gin.HandlerFunc(adminAuth), settingService)
+}
+
+// registerCustomInvoiceRoutes 只在主仓路由层追加企业普票开票申请入口。
+//
+// 抬头管理、订单占用、开票状态机和 PDF 文件权限都在 internal/custom/invoice
+// 内部实现；这里仅复用主仓用户/管理员鉴权，避免改动支付订单和充值履约链路。
+func registerCustomInvoiceRoutes(
+	v1 *gin.RouterGroup,
+	bundle *custominvoice.Bundle,
+	jwtAuth middleware2.JWTAuthMiddleware,
+	adminAuth middleware2.AdminAuthMiddleware,
+	settingService *service.SettingService,
+) {
+	if v1 == nil || bundle == nil || bundle.Handler == nil {
+		return
+	}
+
+	custominvoiceroutes.RegisterPublicRoutes(v1, bundle.Handler)
+
+	user := v1.Group("")
+	user.Use(gin.HandlerFunc(jwtAuth))
+	user.Use(middleware2.BackendModeUserGuard(settingService))
+	custominvoiceroutes.RegisterUserRoutes(user, bundle.Handler)
+
+	admin := v1.Group("/admin")
+	admin.Use(gin.HandlerFunc(adminAuth))
+	admin.Use(middleware2.AdminComplianceGuard(settingService))
+	custominvoiceroutes.RegisterAdminRoutes(admin, bundle.Handler)
 }
 
 // registerCustomOAuthApplicationRoutes 只在主仓路由层追加第三方 OAuth 应用入口。

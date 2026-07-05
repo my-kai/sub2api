@@ -1,17 +1,25 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math/big"
+	"mime"
+	"mime/multipart"
 	"net"
 	"net/smtp"
+	"net/textproto"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -92,6 +100,17 @@ type SMTPConfig struct {
 	UseTLS   bool
 }
 
+// EmailAttachment describes one file attached to an outgoing email.
+//
+// Filename is used only in MIME headers and is sanitized before delivery.
+// ContentType should be a valid media type; invalid values are rejected to
+// application/octet-stream so SMTP delivery never receives malformed headers.
+type EmailAttachment struct {
+	Filename    string
+	ContentType string
+	Data        []byte
+}
+
 // EmailService 邮件服务
 type EmailService struct {
 	settingRepo              SettingRepository
@@ -109,6 +128,17 @@ func NewEmailService(settingRepo SettingRepository, cache EmailCache) *EmailServ
 
 func (s *EmailService) SetNotificationEmailService(notificationEmailService *NotificationEmailService) {
 	s.notificationEmailService = notificationEmailService
+}
+
+// RenderNotificationEmail renders an existing notification email template without sending it.
+//
+// Custom delivery paths such as invoice PDF attachments use this to keep their
+// subject and HTML aligned with the admin-editable notification template system.
+func (s *EmailService) RenderNotificationEmail(ctx context.Context, input NotificationEmailSendInput) (NotificationEmailPreview, error) {
+	if s == nil || s.notificationEmailService == nil {
+		return NotificationEmailPreview{}, notificationEmailConfigErr(errors.New("notification email service is not configured"))
+	}
+	return s.notificationEmailService.Render(ctx, input)
 }
 
 func firstEmailLocale(locales []string) string {
@@ -180,6 +210,15 @@ func (s *EmailService) SendEmail(ctx context.Context, to, subject, body string) 
 	return s.SendEmailWithConfig(config, to, subject, body)
 }
 
+// SendEmailWithAttachment sends one HTML email with a single attachment using stored SMTP settings.
+func (s *EmailService) SendEmailWithAttachment(ctx context.Context, to, subject, body string, attachment EmailAttachment) error {
+	config, err := s.GetSMTPConfig(ctx)
+	if err != nil {
+		return err
+	}
+	return s.SendEmailWithConfigAndAttachment(config, to, subject, body, attachment)
+}
+
 const smtpDialTimeout = 10 * time.Second
 const smtpIOTimeout = 20 * time.Second
 
@@ -205,6 +244,111 @@ func (s *EmailService) SendEmailWithConfig(config *SMTPConfig, to, subject, body
 	}
 
 	return s.sendMailPlain(addr, auth, config.From, to, []byte(msg), config.Host)
+}
+
+// SendEmailWithConfigAndAttachment sends one HTML email plus a single MIME attachment.
+func (s *EmailService) SendEmailWithConfigAndAttachment(config *SMTPConfig, to, subject, body string, attachment EmailAttachment) error {
+	if len(attachment.Data) == 0 {
+		return fmt.Errorf("email attachment data is required")
+	}
+
+	to = sanitizeEmailHeader(to)
+	subject = sanitizeEmailHeader(subject)
+	from := sanitizeEmailHeader(config.From)
+	if config.FromName != "" {
+		from = fmt.Sprintf("%s <%s>", sanitizeEmailHeader(config.FromName), sanitizeEmailHeader(config.From))
+	}
+
+	msg, err := buildEmailWithAttachmentMessage(from, to, subject, body, attachment)
+	if err != nil {
+		return err
+	}
+
+	addr := fmt.Sprintf("%s:%d", config.Host, config.Port)
+	auth := smtp.PlainAuth("", config.Username, config.Password, config.Host)
+	if config.UseTLS {
+		return s.sendMailTLS(addr, auth, config.From, to, msg, config.Host)
+	}
+	return s.sendMailPlain(addr, auth, config.From, to, msg, config.Host)
+}
+
+func buildEmailWithAttachmentMessage(from, to, subject, body string, attachment EmailAttachment) ([]byte, error) {
+	var mixedBody bytes.Buffer
+	writer := multipart.NewWriter(&mixedBody)
+
+	htmlHeader := textproto.MIMEHeader{}
+	htmlHeader.Set("Content-Type", "text/html; charset=UTF-8")
+	htmlHeader.Set("Content-Transfer-Encoding", "8bit")
+	htmlPart, err := writer.CreatePart(htmlHeader)
+	if err != nil {
+		return nil, fmt.Errorf("create email html part: %w", err)
+	}
+	if _, err := htmlPart.Write([]byte(body)); err != nil {
+		return nil, fmt.Errorf("write email html part: %w", err)
+	}
+
+	attachmentName := sanitizeAttachmentFilename(attachment.Filename)
+	attachmentHeader := textproto.MIMEHeader{}
+	attachmentHeader.Set("Content-Type", mime.FormatMediaType(sanitizeAttachmentContentType(attachment.ContentType), map[string]string{"name": attachmentName}))
+	attachmentHeader.Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": attachmentName}))
+	attachmentHeader.Set("Content-Transfer-Encoding", "base64")
+	attachmentPart, err := writer.CreatePart(attachmentHeader)
+	if err != nil {
+		return nil, fmt.Errorf("create email attachment part: %w", err)
+	}
+	if err := writeBase64MIME(attachmentPart, attachment.Data); err != nil {
+		return nil, fmt.Errorf("write email attachment part: %w", err)
+	}
+	if err := writer.Close(); err != nil {
+		return nil, fmt.Errorf("close email multipart writer: %w", err)
+	}
+
+	var msg bytes.Buffer
+	_, _ = fmt.Fprintf(&msg, "From: %s\r\n", from)
+	_, _ = fmt.Fprintf(&msg, "To: %s\r\n", to)
+	_, _ = fmt.Fprintf(&msg, "Subject: %s\r\n", subject)
+	_, _ = fmt.Fprint(&msg, "MIME-Version: 1.0\r\n")
+	_, _ = fmt.Fprintf(&msg, "Content-Type: %s\r\n\r\n", mime.FormatMediaType("multipart/mixed", map[string]string{"boundary": writer.Boundary()}))
+	if _, err := msg.Write(mixedBody.Bytes()); err != nil {
+		return nil, fmt.Errorf("write email message body: %w", err)
+	}
+	return msg.Bytes(), nil
+}
+
+func sanitizeAttachmentFilename(filename string) string {
+	filename = sanitizeEmailHeader(filepath.Base(strings.TrimSpace(filename)))
+	filename = strings.NewReplacer("/", "_", "\\", "_", "\x00", "").Replace(filename)
+	if filename == "" || filename == "." {
+		return "attachment"
+	}
+	return filename
+}
+
+func sanitizeAttachmentContentType(contentType string) string {
+	mediaType, _, err := mime.ParseMediaType(strings.TrimSpace(contentType))
+	if err != nil || strings.TrimSpace(mediaType) == "" {
+		return "application/octet-stream"
+	}
+	return mediaType
+}
+
+func writeBase64MIME(w io.Writer, data []byte) error {
+	encoded := make([]byte, base64.StdEncoding.EncodedLen(len(data)))
+	base64.StdEncoding.Encode(encoded, data)
+	for len(encoded) > 0 {
+		n := 76
+		if len(encoded) < n {
+			n = len(encoded)
+		}
+		if _, err := w.Write(encoded[:n]); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(w, "\r\n"); err != nil {
+			return err
+		}
+		encoded = encoded[n:]
+	}
+	return nil
 }
 
 // sendMailPlain sends mail without TLS using a dialer with timeout.

@@ -12,6 +12,7 @@ import { useNavigationLoadingState } from '@/composables/useNavigationLoading'
 import { useRoutePrefetch } from '@/composables/useRoutePrefetch'
 import { getSetupStatus } from '@/api/setup'
 import { customActivityRouteRecords } from '@/custom/activity/routes'
+import { customInvoiceRouteRecords } from '@/custom/invoice/routes'
 import { customOAuthAppRouteRecords, isCustomOAuthAuthorizeRoute } from '@/custom/oauthapp/routes'
 import { resolveAuthReturnPath } from '@/custom/oauthapp/authReturn'
 import { resolveCompletedSetupRedirectPath } from './setupRedirect'
@@ -387,6 +388,8 @@ const routes: RouteRecordRaw[] = [
   },
   // ==================== Custom Activity Routes ====================
   ...customActivityRouteRecords,
+  // ==================== Custom Invoice Routes ====================
+  ...customInvoiceRouteRecords,
 
   {
     path: '/custom/:id',

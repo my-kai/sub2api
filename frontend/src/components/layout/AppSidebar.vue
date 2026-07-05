@@ -232,6 +232,7 @@ import { useI18n } from 'vue-i18n'
 import { useAdminSettingsStore, useAppStore, useAuthStore, useOnboardingStore } from '@/stores'
 import VersionBadge from '@/components/common/VersionBadge.vue'
 import { findCustomActivityRoute } from '@/custom/activity/routes'
+import { findCustomInvoiceRoute } from '@/custom/invoice/routes'
 import { findCustomModelMarketplaceRoute } from '@/custom/modelMarketplace/routes'
 import { findCustomOAuthAppRoute } from '@/custom/oauthapp/routes'
 import { sanitizeSvg } from '@/utils/sanitize'
@@ -806,6 +807,8 @@ function buildSelfNavItems(withDashboard: boolean): NavItem[] {
     { path: '/subscriptions', label: t('nav.mySubscriptions'), icon: CreditCardIcon, hideInSimpleMode: true },
     { path: '/purchase', label: t('nav.buySubscription'), icon: RechargeSubscriptionIcon, hideInSimpleMode: true, featureFlag: flagPayment },
     { path: '/orders', label: t('nav.myOrders'), icon: OrderListIcon, hideInSimpleMode: true, featureFlag: flagPayment },
+    { path: customInvoicePath('UserInvoiceApplications', '/invoices'), label: '开票申请', icon: OrderListIcon, hideInSimpleMode: true, featureFlag: flagPayment },
+    { path: customInvoicePath('UserInvoiceTitles', '/invoice-titles'), label: '抬头管理', icon: CreditCardIcon, hideInSimpleMode: true, featureFlag: flagPayment },
     { path: '/redeem', label: t('nav.redeem'), icon: GiftIcon, hideInSimpleMode: true },
     { path: '/affiliate', label: t('nav.affiliate'), icon: UsersIcon, hideInSimpleMode: true, featureFlag: flagAffiliate },
     { path: '/profile', label: t('nav.profile'), icon: UserIcon },
@@ -869,6 +872,7 @@ const adminNavItems = computed((): NavItem[] => {
     { path: '/admin/promo-codes', label: t('nav.promoCodes'), icon: GiftIcon, hideInSimpleMode: true },
     { path: customOAuthAppPath('AdminCustomOAuthApplications'), label: '应用管理', icon: KeyIcon, hideInSimpleMode: true },
     { path: customActivityPath('AdminCustomActivities', '/admin/custom/activities'), label: '活动管理', icon: GiftIcon },
+    { path: customInvoicePath('AdminInvoiceApplications', '/admin/custom/invoices'), label: '开票管理', icon: OrderListIcon, hideInSimpleMode: true, featureFlag: flagAdminPayment },
     {
       path: '/admin/affiliates',
       label: t('nav.affiliateManagement'),
@@ -923,6 +927,11 @@ const adminNavItems = computed((): NavItem[] => {
  */
 function customActivityPath(name: string, fallbackPath = '/custom/activities'): string {
   return findCustomActivityRoute(name)?.path || fallbackPath
+}
+
+// custom 开票路径集中从路由声明读取，避免侧边栏与页面入口分散维护。
+function customInvoicePath(name: string, fallbackPath: string): string {
+  return findCustomInvoiceRoute(name)?.path || fallbackPath
 }
 
 // custom OAuth 应用管理路径集中从 custom 路由声明读取，降低主仓入口维护成本。
