@@ -151,6 +151,16 @@ func TestUsageBillingRepositoryApply_GiftCreditBalanceScenarios(t *testing.T) {
 			wantBalanceDebit: 0.50,
 			wantGiftDebit:    0.75,
 		},
+		{
+			name:             "negative balance and has partial gift balance",
+			startBalance:     -0.20,
+			giftAmount:       "0.75",
+			cost:             1.25,
+			wantBalance:      -0.70,
+			wantGiftBalance:  0,
+			wantBalanceDebit: 0.50,
+			wantGiftDebit:    0.75,
+		},
 	}
 
 	for _, tt := range cases {

@@ -62,6 +62,17 @@ func TestBillingCacheServiceCheckBalanceEligibilityUsesGiftCredit(t *testing.T) 
 			balance:     1,
 			giftBalance: 1,
 		},
+		{
+			name:        "negative balance and gift keeps available balance positive",
+			balance:     -1,
+			giftBalance: 1.5,
+		},
+		{
+			name:        "negative balance and gift does not keep available balance positive",
+			balance:     -1,
+			giftBalance: 1,
+			wantErr:     ErrInsufficientBalance,
+		},
 	}
 
 	for _, tt := range tests {

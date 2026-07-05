@@ -974,7 +974,11 @@ func (s *BillingCacheService) checkBalanceEligibility(ctx context.Context, userI
 		s.circuitBreaker.OnSuccess()
 	}
 
-	if s.balanceBelowEligibilityThreshold(balance) {
+	// Admission follows the billing contract: ordinary balance plus unexpired
+	// gift credit only needs to be positive. The minimum reserve is kept for
+	// post-deduction cache invalidation, not for blocking a request that can
+	// still be settled through the existing overdraft path.
+	if balance <= 0 {
 		return ErrInsufficientBalance
 	}
 

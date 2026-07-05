@@ -238,6 +238,18 @@ func TestAPIKeyAuthSetsGroupContext(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 }
 
+func TestAPIKeyAuthAvailableBalanceUsesOrdinaryPlusGiftBalance(t *testing.T) {
+	require.InDelta(t, 0.5, apiKeyAuthAvailableBalance(&service.User{
+		Balance:     -1,
+		GiftBalance: 1.5,
+	}), 0.000001)
+	require.InDelta(t, 3.25, apiKeyAuthAvailableBalance(&service.User{
+		Balance:          -1,
+		GiftBalance:      1.5,
+		AvailableBalance: 3.25,
+	}), 0.000001)
+}
+
 func TestAPIKeyAuthRejectsExclusiveGroupWhenUserNoLongerAllowed(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

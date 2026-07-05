@@ -286,6 +286,28 @@ func TestAPIKeyService_SnapshotRoundTrip_PreservesMessagesDispatchModelConfig(t 
 	require.Equal(t, apiKey.Group.MessagesDispatchModelConfig, roundTrip.Group.MessagesDispatchModelConfig)
 }
 
+func TestAPIKeyServiceSnapshotUsesBalancePlusGiftWhenAvailableBalanceUnset(t *testing.T) {
+	svc := NewAPIKeyService(nil, nil, nil, nil, nil, nil, &config.Config{})
+	apiKey := &APIKey{
+		ID:     1,
+		UserID: 2,
+		Key:    "k-available-fallback",
+		Status: StatusActive,
+		User: &User{
+			ID:          2,
+			Status:      StatusActive,
+			Role:        RoleUser,
+			Balance:     -1,
+			GiftBalance: 1.5,
+			Concurrency: 3,
+		},
+	}
+
+	snapshot, err := svc.snapshotFromAPIKey(context.Background(), apiKey)
+	require.NoError(t, err)
+	require.InDelta(t, 0.5, snapshot.User.AvailableBalance, 0.000001)
+}
+
 func TestAPIKeyService_LoadAuthCacheEntryClampsTTLToGiftExpiry(t *testing.T) {
 	cache := &authCacheStub{}
 	expiresAt := time.Now().UTC().Add(200 * time.Millisecond)

@@ -242,7 +242,13 @@ func apiKeyAuthAvailableBalance(user *service.User) float64 {
 	if user == nil {
 		return 0
 	}
-	return user.AvailableBalance
+	if user.AvailableBalance != 0 {
+		return user.AvailableBalance
+	}
+	// Auth snapshots normally carry AvailableBalance, but direct test/runtime
+	// callers may only hydrate ordinary and gift balances. Compute the same
+	// eligibility value here so admission consistently uses balance + gift.
+	return user.Balance + user.GiftBalance
 }
 
 // GetAPIKeyFromContext 从上下文中获取API key

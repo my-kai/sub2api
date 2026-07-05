@@ -643,9 +643,9 @@ type ProxyProbeConfig struct {
 
 type BillingConfig struct {
 	CircuitBreaker CircuitBreakerConfig `mapstructure:"circuit_breaker"`
-	// MinimumBalanceReserve is the conservative preflight floor for balance billing.
-	// Requests in balance mode are rejected when the cached balance is below this
-	// amount, even if it is still positive. Set to 0 to keep the legacy balance > 0 gate.
+	// MinimumBalanceReserve is the conservative cache refresh floor after balance billing.
+	// Request admission itself uses available balance > 0 so the existing overdraft
+	// settlement path can still record debt when a positive balance cannot cover usage.
 	MinimumBalanceReserve float64 `mapstructure:"minimum_balance_reserve"`
 	// UserPlatformQuotaCacheTTLSeconds 用户 × 平台 quota 缓存 TTL（秒），默认 86400=1天，覆盖典型 daily 窗口。
 	// 消费点：

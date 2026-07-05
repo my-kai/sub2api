@@ -65,6 +65,31 @@ func TestDeductUsageBillingBalance_RecordsOverdraftWhenGuardMisses(t *testing.T)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestDeductUsageBillingBalance_ContinuesDeductionFromNegativeBalance(t *testing.T) {
+	ctx := context.Background()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	mock.ExpectBegin()
+	tx, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	mock.ExpectQuery(conditionalBalanceDeductSQL).
+		WithArgs(1.5, int64(42)).
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(overdraftBalanceDeductSQL).
+		WithArgs(1.5, int64(42)).
+		WillReturnRows(sqlmock.NewRows([]string{"balance"}).AddRow(-2.5))
+	mock.ExpectCommit()
+
+	newBalance, sufficient, err := deductUsageBillingBalance(ctx, tx, 42, 1.5)
+	require.NoError(t, err)
+	require.False(t, sufficient)
+	require.InDelta(t, -2.5, newBalance, 0.000001)
+	require.NoError(t, tx.Commit())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestApplyUsageBillingEffects_FlagsBalanceOverdraft(t *testing.T) {
 	ctx := context.Background()
 	db, mock, err := sqlmock.New()

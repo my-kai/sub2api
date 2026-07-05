@@ -4,34 +4,41 @@
       <!-- User header: two-row layout with full user info -->
       <div class="rounded-xl bg-gray-50 p-4 dark:bg-dark-700">
         <!-- Row 1: avatar + email/username/created_at (left) + current balance (right) -->
-        <div class="flex items-center gap-3">
-          <div class="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-primary-100 dark:bg-primary-900/30">
-            <span class="text-lg font-medium text-primary-700 dark:text-primary-300">
-              {{ user.email.charAt(0).toUpperCase() }}
-            </span>
-          </div>
-          <div class="min-w-0 flex-1">
-            <div class="flex items-center gap-2">
-              <p class="truncate font-medium text-gray-900 dark:text-white">{{ user.email }}</p>
-              <span v-if="user.deleted_at" class="flex-shrink-0 inline-flex items-center rounded px-1 py-px text-[10px] font-medium leading-tight bg-rose-100 text-rose-600 ring-1 ring-inset ring-rose-200 dark:bg-rose-500/20 dark:text-rose-400 dark:ring-rose-500/30">
-                {{ t('admin.usage.userDeletedBadge') }}
-              </span>
-              <span
-                v-if="user.username"
-                class="flex-shrink-0 rounded bg-primary-50 px-1.5 py-0.5 text-xs text-primary-600 dark:bg-primary-900/20 dark:text-primary-400"
-              >
-                {{ user.username }}
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div class="flex min-w-0 items-center gap-3">
+            <div class="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-primary-100 dark:bg-primary-900/30">
+              <span class="text-lg font-medium text-primary-700 dark:text-primary-300">
+                {{ user.email.charAt(0).toUpperCase() }}
               </span>
             </div>
-            <p class="text-xs text-gray-400 dark:text-dark-500">
-              {{ t('admin.users.createdAt') }}: {{ formatDateTime(user.created_at) }}
-            </p>
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-2">
+                <p class="truncate font-medium text-gray-900 dark:text-white">{{ user.email }}</p>
+                <span v-if="user.deleted_at" class="flex-shrink-0 inline-flex items-center rounded px-1 py-px text-[10px] font-medium leading-tight bg-rose-100 text-rose-600 ring-1 ring-inset ring-rose-200 dark:bg-rose-500/20 dark:text-rose-400 dark:ring-rose-500/30">
+                  {{ t('admin.usage.userDeletedBadge') }}
+                </span>
+                <span
+                  v-if="user.username"
+                  class="flex-shrink-0 rounded bg-primary-50 px-1.5 py-0.5 text-xs text-primary-600 dark:bg-primary-900/20 dark:text-primary-400"
+                >
+                  {{ user.username }}
+                </span>
+              </div>
+              <p class="text-xs text-gray-400 dark:text-dark-500">
+                {{ t('admin.users.createdAt') }}: {{ formatDateTime(user.created_at) }}
+              </p>
+            </div>
           </div>
           <!-- Current balance: prominent display on the right -->
-          <div class="flex-shrink-0 text-right">
-            <p class="text-xs text-gray-500 dark:text-dark-400">{{ t('admin.users.currentBalance') }}</p>
-            <p class="text-xl font-bold text-gray-900 dark:text-white">
-              ${{ user.balance?.toFixed(2) || '0.00' }}
+          <div class="w-full rounded-xl border border-gray-200/70 bg-white/80 px-4 py-3 text-left shadow-sm dark:border-dark-600/70 dark:bg-dark-800/80 sm:w-auto sm:min-w-[14rem] sm:text-right">
+            <p class="flex flex-wrap items-baseline gap-x-2 gap-y-1 sm:justify-end">
+              <span class="font-mono text-2xl font-bold leading-none text-gray-950 tabular-nums dark:text-white">{{ formatCurrency(currentAvailableBalance) }}</span>
+              <span
+                v-if="currentGiftBalance > 0"
+                class="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-inset ring-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-500/30"
+              >
+                {{ t('admin.users.giftCredit') }} {{ formatCurrency(currentGiftBalance) }}
+              </span>
             </p>
           </div>
         </div>
@@ -194,6 +201,9 @@ const pageSize = 15
 const typeFilter = ref('')
 
 const totalPages = computed(() => Math.ceil(total.value / pageSize) || 1)
+const currentGiftBalance = computed(() => props.user?.gift_balance ?? 0)
+const currentAvailableBalance = computed(() => (props.user?.balance ?? 0) + currentGiftBalance.value)
+const formatCurrency = (value: number) => `$${value.toFixed(2)}`
 
 // Type filter options
 const typeOptions = computed(() => [
@@ -201,6 +211,7 @@ const typeOptions = computed(() => [
   { value: 'balance', label: t('admin.users.typeBalance') },
   { value: 'affiliate_balance', label: t('admin.users.typeAffiliateBalance') },
   { value: 'admin_balance', label: t('admin.users.typeAdminBalance') },
+  { value: 'admin_gift_credit', label: t('admin.users.giftCredit') },
   { value: 'image_generation', label: t('admin.users.typeImageGeneration') },
   { value: 'concurrency', label: t('admin.users.typeConcurrency') },
   { value: 'admin_concurrency', label: t('admin.users.typeAdminConcurrency') },
@@ -237,10 +248,12 @@ const loadHistory = async (page: number) => {
 }
 
 // Helper: check if admin type
-const isAdminType = (type: string) => type === 'admin_balance' || type === 'admin_concurrency'
+const isAdminType = (type: string) => type === 'admin_balance' || type === 'admin_concurrency' || type === 'admin_gift_credit'
 
-// Helper: check if balance type (includes admin_balance)
-const isBalanceType = (type: string) => type === 'balance' || type === 'admin_balance' || type === 'affiliate_balance' || type === 'image_generation'
+const giftBalanceTypes = new Set(['admin_gift_credit', 'promo_gift_credit', 'activity_reward'])
+
+// Helper: check if balance type (includes ordinary balance and gift balance records)
+const isBalanceType = (type: string) => type === 'balance' || type === 'admin_balance' || type === 'affiliate_balance' || type === 'image_generation' || giftBalanceTypes.has(type)
 
 // Helper: check if subscription type
 const isSubscriptionType = (type: string) => type === 'subscription'
@@ -300,6 +313,10 @@ const getItemTitle = (item: BalanceHistoryItem) => {
       return t('redeem.balanceAddedAffiliate')
     case 'admin_balance':
       return item.value >= 0 ? t('redeem.balanceAddedAdmin') : t('redeem.balanceDeductedAdmin')
+    case 'admin_gift_credit':
+    case 'promo_gift_credit':
+    case 'activity_reward':
+      return t('admin.users.giftCredit')
     case 'image_generation':
       return item.value >= 0 ? t('redeem.imageGenerationRefunded') : t('redeem.imageGenerationCharged')
     case 'concurrency':
