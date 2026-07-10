@@ -8,13 +8,15 @@ package main
 
 import (
 	"context"
+	"database/sql"
+	"fmt"
 	"github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/config"
-	customactivityruntime "github.com/Wei-Shaw/sub2api/internal/custom/activity/runtime"
-	customcallbackauth "github.com/Wei-Shaw/sub2api/internal/custom/callbackauth"
-	customgiftcreditruntime "github.com/Wei-Shaw/sub2api/internal/custom/giftcredit/runtime"
-	custominvoice "github.com/Wei-Shaw/sub2api/internal/custom/invoice"
-	customoauthapp "github.com/Wei-Shaw/sub2api/internal/custom/oauthapp"
+	runtime2 "github.com/Wei-Shaw/sub2api/internal/custom/activity/runtime"
+	"github.com/Wei-Shaw/sub2api/internal/custom/callbackauth"
+	"github.com/Wei-Shaw/sub2api/internal/custom/giftcredit/runtime"
+	"github.com/Wei-Shaw/sub2api/internal/custom/invoice"
+	"github.com/Wei-Shaw/sub2api/internal/custom/oauthapp"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/handler/admin"
 	"github.com/Wei-Shaw/sub2api/internal/payment"
@@ -71,22 +73,12 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	userPlatformQuotaRepository := repository.NewUserPlatformQuotaRepository(client)
 	serviceUserPlatformQuotaRepository := repository.NewUserPlatformQuotaServiceAdapter(userPlatformQuotaRepository)
 	billingCacheService := service.ProvideBillingCacheService(billingCache, userRepository, userSubscriptionRepository, apiKeyRepository, userRPMCache, userGroupRateRepository, configConfig, serviceUserPlatformQuotaRepository)
-	giftCreditBundle, err := customgiftcreditruntime.ProvideBundleFromEnv(db)
-	if err != nil {
-		return nil, err
-	}
-	if giftCreditBundle != nil && giftCreditBundle.Service != nil {
-		billingCacheService.SetGiftCreditBalanceReader(giftCreditBundle.Service)
-	}
 	apiKeyCache := repository.NewAPIKeyCache(redisClient)
 	concurrencyCache := repository.ProvideConcurrencyCache(redisClient, configConfig)
 	schedulerCache := repository.ProvideSchedulerCache(redisClient, configConfig)
 	accountRepository := repository.NewAccountRepository(client, db, schedulerCache)
 	concurrencyService := service.ProvideConcurrencyService(concurrencyCache, accountRepository, configConfig)
 	apiKeyService := service.ProvideAPIKeyService(apiKeyRepository, userRepository, groupRepository, userSubscriptionRepository, userGroupRateRepository, apiKeyCache, configConfig, billingCacheService, concurrencyService)
-	if giftCreditBundle != nil && giftCreditBundle.Service != nil {
-		apiKeyService.SetGiftCreditBalanceReader(giftCreditBundle.Service)
-	}
 	apiKeyAuthCacheInvalidator := service.ProvideAPIKeyAuthCacheInvalidator(apiKeyService)
 	promoService := service.NewPromoService(promoCodeRepository, userRepository, billingCacheService, client, apiKeyAuthCacheInvalidator)
 	subscriptionService := service.NewSubscriptionService(groupRepository, userSubscriptionRepository, billingCacheService, client, configConfig)
@@ -94,9 +86,6 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	affiliateService := service.NewAffiliateService(affiliateRepository, settingService, apiKeyAuthCacheInvalidator, billingCacheService)
 	authService := service.NewAuthService(client, userRepository, redeemCodeRepository, refreshTokenCache, configConfig, settingService, emailService, turnstileService, emailQueueService, promoService, subscriptionService, affiliateService, serviceUserPlatformQuotaRepository)
 	userService := service.NewUserService(userRepository, settingRepository, apiKeyAuthCacheInvalidator, billingCache)
-	if giftCreditBundle != nil && giftCreditBundle.Service != nil {
-		userService.SetGiftCreditBalanceReader(giftCreditBundle.Service)
-	}
 	redeemCache := repository.NewRedeemCache(redisClient)
 	redeemService := service.NewRedeemService(redeemCodeRepository, userRepository, subscriptionService, redeemCache, billingCacheService, client, apiKeyAuthCacheInvalidator, affiliateService)
 	secretEncryptor, err := repository.NewAESEncryptor(configConfig)
@@ -114,11 +103,13 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	usageLogRepository := repository.NewUsageLogRepository(client, db)
 	usageService := service.NewUsageService(usageLogRepository, userRepository, client, apiKeyAuthCacheInvalidator)
 	opsRepository := repository.NewOpsRepository(db)
-	var usageBillingRepository service.UsageBillingRepository
-	if giftCreditBundle != nil && giftCreditBundle.Store != nil {
-		usageBillingRepository = repository.NewUsageBillingRepositoryWithGiftCredit(client, db, giftCreditBundle.Store)
-	} else {
-		usageBillingRepository = repository.NewUsageBillingRepository(client, db)
+	bundle, err := runtime.ProvideBundleFromEnv(db)
+	if err != nil {
+		return nil, err
+	}
+	usageBillingRepository, err := provideGiftCreditUsageBillingRepository(client, db, bundle)
+	if err != nil {
+		return nil, err
 	}
 	gatewayCache := repository.NewGatewayCache(redisClient)
 	schedulerOutboxRepository := repository.NewSchedulerOutboxRepository(db)
@@ -199,9 +190,6 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	proxyExitInfoProber := repository.NewProxyExitInfoProber(configConfig)
 	proxyLatencyCache := repository.NewProxyLatencyCache(redisClient)
 	adminService := service.NewAdminService(userRepository, groupRepository, accountRepository, proxyRepository, apiKeyRepository, redeemCodeRepository, userGroupRateRepository, userRPMCache, billingCacheService, proxyExitInfoProber, proxyLatencyCache, apiKeyAuthCacheInvalidator, client, settingService, subscriptionService, userSubscriptionRepository, privacyClientFactory, openAIGatewayService)
-	if giftCreditBundle != nil && giftCreditBundle.Service != nil {
-		service.SetAdminGiftCreditBalanceReader(adminService, giftCreditBundle.Service)
-	}
 	adminUserHandler := admin.NewUserHandler(adminService, concurrencyService, serviceUserPlatformQuotaRepository, billingCache)
 	groupCapacityService := service.NewGroupCapacityService(accountRepository, groupRepository, concurrencyService, sessionLimitCache, rpmCache)
 	groupHandler := admin.NewGroupHandler(adminService, dashboardService, groupCapacityService)
@@ -285,30 +273,42 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	handlerPaymentHandler := handler.NewPaymentHandler(paymentService, paymentConfigService, channelService)
 	paymentWebhookHandler := handler.NewPaymentWebhookHandler(paymentService, registry)
 	availableChannelHandler := handler.NewAvailableChannelHandler(channelService, apiKeyService, settingService)
+	batchImageRepository := repository.NewBatchImageRepository(db)
+	batchImageQueue := repository.NewBatchImageQueue(redisClient, configConfig)
+	batchImageModelPricingResolver := service.ProvideBatchImageModelPricingResolver(modelPricingResolver)
+	batchImagePublicService := service.NewBatchImagePublicService(batchImageRepository, accountRepository, groupRepository, userGroupRateRepository, batchImageQueue, batchImageModelPricingResolver, usageBillingRepository, apiKeyAuthCacheInvalidator, configConfig)
+	batchImageDownloadLimiter := repository.NewBatchImageDownloadLimiter(redisClient, configConfig)
+	batchImageDownloadService := service.NewBatchImageDownloadService(batchImageRepository, accountRepository, batchImageDownloadLimiter, configConfig)
+	batchImageCleanupService := service.ProvideBatchImageCleanupService(batchImageRepository, accountRepository, configConfig)
+	batchImageHandler := handler.NewBatchImageHandler(batchImagePublicService, batchImageDownloadService, batchImageCleanupService)
 	idempotencyCoordinator := service.ProvideIdempotencyCoordinator(idempotencyRepository, configConfig)
 	idempotencyCleanupService := service.ProvideIdempotencyCleanupService(idempotencyRepository, configConfig)
-	handlers := handler.ProvideHandlers(authHandler, userHandler, apiKeyHandler, usageHandler, redeemHandler, subscriptionHandler, announcementHandler, channelMonitorUserHandler, adminHandlers, gatewayHandler, openAIGatewayHandler, handlerSettingHandler, totpHandler, handlerPaymentHandler, paymentWebhookHandler, availableChannelHandler, idempotencyCoordinator, idempotencyCleanupService)
+	handlers := handler.ProvideHandlers(authHandler, userHandler, apiKeyHandler, usageHandler, redeemHandler, subscriptionHandler, announcementHandler, channelMonitorUserHandler, adminHandlers, gatewayHandler, openAIGatewayHandler, handlerSettingHandler, totpHandler, handlerPaymentHandler, paymentWebhookHandler, availableChannelHandler, batchImageHandler, idempotencyCoordinator, idempotencyCleanupService)
 	jwtAuthMiddleware := middleware.NewJWTAuthMiddleware(authService, userService)
 	adminAuthMiddleware := middleware.NewAdminAuthMiddleware(authService, userService, settingService)
 	apiKeyAuthMiddleware := middleware.NewAPIKeyAuthMiddleware(apiKeyService, subscriptionService, configConfig)
-	activityBundle, err := customactivityruntime.ProvideBundleWithMainDeps(db, apiKeyAuthCacheInvalidator, billingCacheService)
+	runtimeBundle, err := runtime2.ProvideBundleWithMainDeps(db, apiKeyAuthCacheInvalidator, billingCacheService)
 	if err != nil {
 		return nil, err
 	}
-	callbackAuthBundle, err := customcallbackauth.ProvideBundle(db, userService, settingService)
+	callbackauthBundle, err := callbackauth.ProvideBundle(db, userService, settingService)
 	if err != nil {
 		return nil, err
 	}
-	invoiceBundle, err := custominvoice.ProvideBundleWithEmail(db, configConfig.Pricing.DataDir, emailService, configConfig.Server.FrontendURL, configConfig.JWT.Secret)
+	invoiceBundle, err := provideInvoiceBundle(db, configConfig, emailService)
 	if err != nil {
 		return nil, err
 	}
-	oauthAppBundle, err := customoauthapp.ProvideBundle(db, userService, authService)
+	oauthappBundle, err := oauthapp.ProvideBundle(db, userService, authService)
 	if err != nil {
 		return nil, err
 	}
-	engine := server.ProvideRouter(configConfig, handlers, jwtAuthMiddleware, adminAuthMiddleware, apiKeyAuthMiddleware, apiKeyService, subscriptionService, opsService, settingService, redisClient, activityBundle, callbackAuthBundle, invoiceBundle, oauthAppBundle)
+	engine := server.ProvideRouter(configConfig, handlers, jwtAuthMiddleware, adminAuthMiddleware, apiKeyAuthMiddleware, apiKeyService, subscriptionService, opsService, settingService, redisClient, runtimeBundle, callbackauthBundle, invoiceBundle, oauthappBundle)
 	httpServer := server.ProvideHTTPServer(configConfig, engine)
+	mainGiftCreditWiring, err := provideGiftCreditWiring(bundle, billingCacheService, apiKeyService, userService, adminService)
+	if err != nil {
+		return nil, err
+	}
 	opsMetricsCollector := service.ProvideOpsMetricsCollector(opsRepository, settingRepository, accountRepository, concurrencyService, db, redisClient, configConfig)
 	opsAggregationService := service.ProvideOpsAggregationService(opsRepository, settingRepository, db, redisClient, configConfig)
 	opsAlertEvaluatorService := service.ProvideOpsAlertEvaluatorService(opsService, opsRepository, emailService, redisClient, configConfig, proxyRepository)
@@ -318,11 +318,12 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	accountExpiryService := service.ProvideAccountExpiryService(accountRepository)
 	proxyExpiryService := service.ProvideProxyExpiryService(proxyRepository)
 	subscriptionExpiryService := service.ProvideSubscriptionExpiryService(userSubscriptionRepository, settingRepository, notificationEmailService, leaderLockCache, db)
+	batchImageWorkerRuntime := service.ProvideBatchImageWorkerRuntime(batchImageRepository, accountRepository, batchImageQueue, usageBillingRepository, usageLogRepository, batchImageModelPricingResolver, apiKeyAuthCacheInvalidator, configConfig)
 	scheduledTestRunnerService := service.ProvideScheduledTestRunnerService(scheduledTestPlanRepository, scheduledTestService, accountTestService, rateLimitService, configConfig)
 	paymentOrderExpiryService := service.ProvidePaymentOrderExpiryService(paymentService, leaderLockCache, db)
 	channelMonitorRunner := service.ProvideChannelMonitorRunner(channelMonitorService, settingService)
 	userPlatformQuotaUsageFlusher := service.ProvideUserPlatformQuotaUsageFlusher(configConfig, billingCache, serviceUserPlatformQuotaRepository, timingWheelService)
-	v := provideCleanup(client, redisClient, opsMetricsCollector, opsAggregationService, opsAlertEvaluatorService, opsCleanupService, opsScheduledReportService, opsSystemLogSink, schedulerSnapshotService, tokenRefreshService, accountExpiryService, proxyExpiryService, subscriptionExpiryService, usageCleanupService, idempotencyCleanupService, pricingService, emailQueueService, billingCacheService, usageRecordWorkerPool, subscriptionService, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, grokOAuthService, openAIGatewayService, scheduledTestRunnerService, backupService, paymentOrderExpiryService, channelMonitorRunner, userPlatformQuotaUsageFlusher)
+	v := provideCleanup(client, redisClient, mainGiftCreditWiring, opsMetricsCollector, opsAggregationService, opsAlertEvaluatorService, opsCleanupService, opsScheduledReportService, opsSystemLogSink, schedulerSnapshotService, tokenRefreshService, accountExpiryService, proxyExpiryService, subscriptionExpiryService, usageCleanupService, idempotencyCleanupService, batchImageCleanupService, batchImageWorkerRuntime, pricingService, emailQueueService, billingCacheService, usageRecordWorkerPool, subscriptionService, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, grokOAuthService, openAIGatewayService, scheduledTestRunnerService, backupService, paymentOrderExpiryService, channelMonitorRunner, userPlatformQuotaUsageFlusher)
 	application := &Application{
 		Server:  httpServer,
 		Cleanup: v,
@@ -335,6 +336,39 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 type Application struct {
 	Server  *http.Server
 	Cleanup func()
+}
+
+func provideInvoiceBundle(db *sql.DB, cfg *config.Config, emailService *service.EmailService) (*invoice.Bundle, error) {
+	return invoice.ProvideBundleWithEmail(db, cfg.Pricing.DataDir, emailService, cfg.Server.FrontendURL, cfg.JWT.Secret)
+}
+
+// giftCreditWiring marks completion of the required cross-service gift-credit injection.
+type giftCreditWiring struct{}
+
+// provideGiftCreditUsageBillingRepository keeps gift and ordinary balance deductions in one transaction.
+func provideGiftCreditUsageBillingRepository(entClient *ent.Client, db *sql.DB, bundle *runtime.Bundle) (service.UsageBillingRepository, error) {
+	if bundle == nil || bundle.Store == nil {
+		return nil, fmt.Errorf("gift credit store is required for usage billing")
+	}
+	return repository.NewUsageBillingRepositoryWithGiftCredit(entClient, db, bundle.Store), nil
+}
+
+// provideGiftCreditWiring injects the aggregate reader after all affected services are constructed.
+func provideGiftCreditWiring(
+	bundle *runtime.Bundle,
+	billingCache *service.BillingCacheService,
+	apiKeyService *service.APIKeyService,
+	userService *service.UserService,
+	adminService service.AdminService,
+) (*giftCreditWiring, error) {
+	if bundle == nil || bundle.Service == nil {
+		return nil, fmt.Errorf("gift credit service is required")
+	}
+	billingCache.SetGiftCreditBalanceReader(bundle.Service)
+	apiKeyService.SetGiftCreditBalanceReader(bundle.Service)
+	userService.SetGiftCreditBalanceReader(bundle.Service)
+	service.SetAdminGiftCreditBalanceReader(adminService, bundle.Service)
+	return &giftCreditWiring{}, nil
 }
 
 func providePrivacyClientFactory() service.PrivacyClientFactory {
@@ -351,6 +385,7 @@ func provideServiceBuildInfo(buildInfo handler.BuildInfo) service.BuildInfo {
 func provideCleanup(
 	entClient *ent.Client,
 	rdb *redis.Client,
+	_ *giftCreditWiring,
 	opsMetricsCollector *service.OpsMetricsCollector,
 	opsAggregation *service.OpsAggregationService,
 	opsAlertEvaluator *service.OpsAlertEvaluatorService,
@@ -364,6 +399,8 @@ func provideCleanup(
 	subscriptionExpiry *service.SubscriptionExpiryService,
 	usageCleanup *service.UsageCleanupService,
 	idempotencyCleanup *service.IdempotencyCleanupService,
+	batchImageCleanup *service.BatchImageCleanupService,
+	batchImageWorker *service.BatchImageWorkerRuntime,
 	pricing *service.PricingService,
 	emailQueue *service.EmailQueueService,
 	billingCache *service.BillingCacheService,
@@ -442,6 +479,18 @@ func provideCleanup(
 			{"IdempotencyCleanupService", func() error {
 				if idempotencyCleanup != nil {
 					idempotencyCleanup.Stop()
+				}
+				return nil
+			}},
+			{"BatchImageCleanupService", func() error {
+				if batchImageCleanup != nil {
+					batchImageCleanup.Stop()
+				}
+				return nil
+			}},
+			{"BatchImageWorkerRuntime", func() error {
+				if batchImageWorker != nil {
+					batchImageWorker.Stop()
 				}
 				return nil
 			}},

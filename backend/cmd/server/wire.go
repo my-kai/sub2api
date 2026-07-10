@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"log"
 	"net/http"
 	"sync"
@@ -48,6 +49,8 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 		customactivityruntime.ProvideBundleWithMainDeps,
 		customcallbackauth.ProvideBundle,
 		customgiftcreditruntime.ProvideBundleFromEnv,
+		provideGiftCreditUsageBillingRepository,
+		provideGiftCreditWiring,
 		provideInvoiceBundle,
 		customoauthapp.ProvideBundle,
 
@@ -73,6 +76,35 @@ func provideInvoiceBundle(db *sql.DB, cfg *config.Config, emailService *service.
 	return custominvoice.ProvideBundleWithEmail(db, cfg.Pricing.DataDir, emailService, cfg.Server.FrontendURL, cfg.JWT.Secret)
 }
 
+// giftCreditWiring marks completion of the required cross-service gift-credit injection.
+type giftCreditWiring struct{}
+
+// provideGiftCreditUsageBillingRepository keeps gift and ordinary balance deductions in one transaction.
+func provideGiftCreditUsageBillingRepository(entClient *ent.Client, db *sql.DB, bundle *customgiftcreditruntime.Bundle) (service.UsageBillingRepository, error) {
+	if bundle == nil || bundle.Store == nil {
+		return nil, fmt.Errorf("gift credit store is required for usage billing")
+	}
+	return repository.NewUsageBillingRepositoryWithGiftCredit(entClient, db, bundle.Store), nil
+}
+
+// provideGiftCreditWiring injects the aggregate reader after all affected services are constructed.
+func provideGiftCreditWiring(
+	bundle *customgiftcreditruntime.Bundle,
+	billingCache *service.BillingCacheService,
+	apiKeyService *service.APIKeyService,
+	userService *service.UserService,
+	adminService service.AdminService,
+) (*giftCreditWiring, error) {
+	if bundle == nil || bundle.Service == nil {
+		return nil, fmt.Errorf("gift credit service is required")
+	}
+	billingCache.SetGiftCreditBalanceReader(bundle.Service)
+	apiKeyService.SetGiftCreditBalanceReader(bundle.Service)
+	userService.SetGiftCreditBalanceReader(bundle.Service)
+	service.SetAdminGiftCreditBalanceReader(adminService, bundle.Service)
+	return &giftCreditWiring{}, nil
+}
+
 func providePrivacyClientFactory() service.PrivacyClientFactory {
 	return repository.CreatePrivacyReqClient
 }
@@ -87,6 +119,7 @@ func provideServiceBuildInfo(buildInfo handler.BuildInfo) service.BuildInfo {
 func provideCleanup(
 	entClient *ent.Client,
 	rdb *redis.Client,
+	_ *giftCreditWiring,
 	opsMetricsCollector *service.OpsMetricsCollector,
 	opsAggregation *service.OpsAggregationService,
 	opsAlertEvaluator *service.OpsAlertEvaluatorService,
@@ -100,6 +133,8 @@ func provideCleanup(
 	subscriptionExpiry *service.SubscriptionExpiryService,
 	usageCleanup *service.UsageCleanupService,
 	idempotencyCleanup *service.IdempotencyCleanupService,
+	batchImageCleanup *service.BatchImageCleanupService,
+	batchImageWorker *service.BatchImageWorkerRuntime,
 	pricing *service.PricingService,
 	emailQueue *service.EmailQueueService,
 	billingCache *service.BillingCacheService,
@@ -179,6 +214,18 @@ func provideCleanup(
 			{"IdempotencyCleanupService", func() error {
 				if idempotencyCleanup != nil {
 					idempotencyCleanup.Stop()
+				}
+				return nil
+			}},
+			{"BatchImageCleanupService", func() error {
+				if batchImageCleanup != nil {
+					batchImageCleanup.Stop()
+				}
+				return nil
+			}},
+			{"BatchImageWorkerRuntime", func() error {
+				if batchImageWorker != nil {
+					batchImageWorker.Stop()
 				}
 				return nil
 			}},

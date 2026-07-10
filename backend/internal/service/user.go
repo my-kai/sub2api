@@ -22,6 +22,7 @@ type User struct {
 	GiftBalance              float64
 	GiftBalanceNextExpiresAt *time.Time
 	AvailableBalance         float64
+	FrozenBalance            float64
 	Concurrency              int
 	Status                   string
 	AllowedGroups            []int64
