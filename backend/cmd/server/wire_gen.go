@@ -13,6 +13,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	runtime2 "github.com/Wei-Shaw/sub2api/internal/custom/activity/runtime"
+	"github.com/Wei-Shaw/sub2api/internal/custom/aigatewayadmintransfer"
 	"github.com/Wei-Shaw/sub2api/internal/custom/callbackauth"
 	"github.com/Wei-Shaw/sub2api/internal/custom/giftcredit/runtime"
 	"github.com/Wei-Shaw/sub2api/internal/custom/invoice"
@@ -289,6 +290,10 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	jwtAuthMiddleware := middleware.NewJWTAuthMiddleware(authService, userService)
 	adminAuthMiddleware := middleware.NewAdminAuthMiddleware(authService, userService, settingService)
 	apiKeyAuthMiddleware := middleware.NewAPIKeyAuthMiddleware(apiKeyService, subscriptionService, configConfig)
+	aigatewayadmintransferBundle, err := aigatewayadmintransfer.ProvideBundle(db, userRepository, totpService)
+	if err != nil {
+		return nil, err
+	}
 	runtimeBundle, err := runtime2.ProvideBundleWithMainDeps(db, apiKeyAuthCacheInvalidator, billingCacheService)
 	if err != nil {
 		return nil, err
@@ -305,7 +310,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	if err != nil {
 		return nil, err
 	}
-	engine := server.ProvideRouter(configConfig, handlers, jwtAuthMiddleware, adminAuthMiddleware, apiKeyAuthMiddleware, apiKeyService, subscriptionService, opsService, settingService, redisClient, runtimeBundle, callbackauthBundle, invoiceBundle, oauthappBundle)
+	engine := server.ProvideRouter(configConfig, handlers, jwtAuthMiddleware, adminAuthMiddleware, apiKeyAuthMiddleware, apiKeyService, subscriptionService, opsService, settingService, redisClient, aigatewayadmintransferBundle, runtimeBundle, callbackauthBundle, invoiceBundle, oauthappBundle)
 	httpServer := server.ProvideHTTPServer(configConfig, engine)
 	mainGiftCreditWiring, err := provideGiftCreditWiring(bundle, billingCacheService, apiKeyService, userService, adminService)
 	if err != nil {

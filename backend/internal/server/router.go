@@ -10,6 +10,8 @@ import (
 	customactivityhandler "github.com/Wei-Shaw/sub2api/internal/custom/activity/handler"
 	customactivityroutes "github.com/Wei-Shaw/sub2api/internal/custom/activity/routes"
 	customactivityruntime "github.com/Wei-Shaw/sub2api/internal/custom/activity/runtime"
+	customaigatewayadmintransfer "github.com/Wei-Shaw/sub2api/internal/custom/aigatewayadmintransfer"
+	customaigatewayadmintransferroutes "github.com/Wei-Shaw/sub2api/internal/custom/aigatewayadmintransfer/routes"
 	customannouncements "github.com/Wei-Shaw/sub2api/internal/custom/announcements/handler"
 	customannouncementroutes "github.com/Wei-Shaw/sub2api/internal/custom/announcements/routes"
 	customcallbackauth "github.com/Wei-Shaw/sub2api/internal/custom/callbackauth"
@@ -43,6 +45,7 @@ func SetupRouter(
 	settingService *service.SettingService,
 	cfg *config.Config,
 	redisClient *redis.Client,
+	customAIGatewayAdminTransfer *customaigatewayadmintransfer.Bundle,
 	customActivity *customactivityruntime.Bundle,
 	customCallbackAuth *customcallbackauth.Bundle,
 	customInvoice *custominvoice.Bundle,
@@ -97,7 +100,7 @@ func SetupRouter(
 	}
 
 	// 注册路由
-	registerRoutes(r, handlers, jwtAuth, adminAuth, apiKeyAuth, apiKeyService, subscriptionService, opsService, settingService, cfg, redisClient, customActivity, customCallbackAuth, customInvoice, customOAuthApp)
+	registerRoutes(r, handlers, jwtAuth, adminAuth, apiKeyAuth, apiKeyService, subscriptionService, opsService, settingService, cfg, redisClient, customAIGatewayAdminTransfer, customActivity, customCallbackAuth, customInvoice, customOAuthApp)
 
 	return r
 }
@@ -115,6 +118,7 @@ func registerRoutes(
 	settingService *service.SettingService,
 	cfg *config.Config,
 	redisClient *redis.Client,
+	customAIGatewayAdminTransfer *customaigatewayadmintransfer.Bundle,
 	customActivity *customactivityruntime.Bundle,
 	customCallbackAuth *customcallbackauth.Bundle,
 	customInvoice *custominvoice.Bundle,
@@ -137,8 +141,26 @@ func registerRoutes(
 	registerCustomInvoiceRoutes(v1, customInvoice, jwtAuth, adminAuth, settingService)
 	registerCustomOAuthApplicationRoutes(v1, customOAuthApp, jwtAuth, adminAuth, settingService)
 	registerCustomActivityRoutes(v1, customActivity, jwtAuth, adminAuth, settingService)
+	registerCustomAIGatewayAdminTransferRoutes(v1, customAIGatewayAdminTransfer, adminAuth)
 
 	handler.RegisterPageRoutes(v1, cfg.Pricing.DataDir, gin.HandlerFunc(jwtAuth), gin.HandlerFunc(adminAuth), settingService)
+}
+
+// registerCustomAIGatewayAdminTransferRoutes 仅挂载 ai-gateway 服务端使用的管理员 API Key 来源扣款接口。
+//
+// 账户认证、TOTP 校验和条件扣款均留在 custom 模块；这里先要求 x-api-key，再复用现有管理员密钥校验。
+func registerCustomAIGatewayAdminTransferRoutes(
+	v1 *gin.RouterGroup,
+	bundle *customaigatewayadmintransfer.Bundle,
+	adminAuth middleware2.AdminAuthMiddleware,
+) {
+	if v1 == nil || bundle == nil || bundle.Handler == nil {
+		return
+	}
+	admin := v1.Group("")
+	admin.Use(customaigatewayadmintransferroutes.RequireAdminAPIKey)
+	admin.Use(gin.HandlerFunc(adminAuth))
+	customaigatewayadmintransferroutes.RegisterAdminRoutes(admin, bundle.Handler)
 }
 
 // registerCustomInvoiceRoutes 只在主仓路由层追加企业普票开票申请入口。

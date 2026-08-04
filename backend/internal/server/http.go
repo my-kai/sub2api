@@ -10,6 +10,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	customactivityruntime "github.com/Wei-Shaw/sub2api/internal/custom/activity/runtime"
+	customaigatewayadmintransfer "github.com/Wei-Shaw/sub2api/internal/custom/aigatewayadmintransfer"
 	customcallbackauth "github.com/Wei-Shaw/sub2api/internal/custom/callbackauth"
 	custominvoice "github.com/Wei-Shaw/sub2api/internal/custom/invoice"
 	customoauthapp "github.com/Wei-Shaw/sub2api/internal/custom/oauthapp"
@@ -42,6 +43,7 @@ func ProvideRouter(
 	opsService *service.OpsService,
 	settingService *service.SettingService,
 	redisClient *redis.Client,
+	customAIGatewayAdminTransfer *customaigatewayadmintransfer.Bundle,
 	customActivity *customactivityruntime.Bundle,
 	customCallbackAuth *customcallbackauth.Bundle,
 	customInvoice *custominvoice.Bundle,
@@ -102,7 +104,7 @@ func ProvideRouter(
 		service.SetWebSearchManager(websearch.NewManager(configs, redisClient))
 	})
 
-	return SetupRouter(r, handlers, jwtAuth, adminAuth, apiKeyAuth, apiKeyService, subscriptionService, opsService, settingService, cfg, redisClient, customActivity, customCallbackAuth, customInvoice, customOAuthApp)
+	return SetupRouter(r, handlers, jwtAuth, adminAuth, apiKeyAuth, apiKeyService, subscriptionService, opsService, settingService, cfg, redisClient, customAIGatewayAdminTransfer, customActivity, customCallbackAuth, customInvoice, customOAuthApp)
 }
 
 // ProvideHTTPServer 提供 HTTP 服务器

@@ -15,6 +15,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	customactivityruntime "github.com/Wei-Shaw/sub2api/internal/custom/activity/runtime"
+	customaigatewayadmintransfer "github.com/Wei-Shaw/sub2api/internal/custom/aigatewayadmintransfer"
 	customcallbackauth "github.com/Wei-Shaw/sub2api/internal/custom/callbackauth"
 	customgiftcreditruntime "github.com/Wei-Shaw/sub2api/internal/custom/giftcredit/runtime"
 	custominvoice "github.com/Wei-Shaw/sub2api/internal/custom/invoice"
@@ -46,6 +47,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 		payment.ProviderSet,
 		middleware.ProviderSet,
 		handler.ProviderSet,
+		customaigatewayadmintransfer.ProvideBundle,
 		customactivityruntime.ProvideBundleWithMainDeps,
 		customcallbackauth.ProvideBundle,
 		customgiftcreditruntime.ProvideBundleFromEnv,
