@@ -21,6 +21,10 @@ type SystemSettings struct {
 	FrontendURL                      string
 	InvitationCodeEnabled            bool
 	TotpEnabled                      bool // TOTP 双因素认证
+	PasskeyEnabled                   bool // Passkey 登录
+	SessionBindingEnabled            bool // 会话 IP/UA 绑定（变更即失效）
+	StepUpEnabled                    bool // 敏感操作 step-up 2FA 门控
+	AuditLogRetentionDays            int  // 审计日志保留天数（<=0 永久保留）
 	LoginAgreementEnabled            bool
 	LoginAgreementMode               string
 	LoginAgreementUpdatedAt          string
@@ -40,6 +44,7 @@ type SystemSettings struct {
 	TurnstileSecretKey           string
 	TurnstileSecretKeyConfigured bool
 	APIKeyACLTrustForwardedIP    bool
+	ForwardedClientIPHeaders     []string
 
 	// LinuxDo Connect OAuth 登录
 	LinuxDoConnectEnabled                bool
@@ -135,6 +140,7 @@ type SystemSettings struct {
 	ContactInfo                 string
 	DocURL                      string
 	HomeContent                 string
+	CompactHomeEnabled          bool
 	HideCcsImportButton         bool
 	PurchaseSubscriptionEnabled bool
 	PurchaseSubscriptionURL     string
@@ -181,6 +187,11 @@ type SystemSettings struct {
 	// Available Channels feature (user-facing aggregate view)
 	AvailableChannelsEnabled bool `json:"available_channels_enabled"`
 
+	// Model Plaza feature (public group/model pricing showcase)
+	ModelPlazaEnabled     bool   `json:"model_plaza_enabled"`
+	ModelPlazaRequireAuth bool   `json:"model_plaza_require_auth"`
+	ModelPlazaDescription string `json:"model_plaza_description"`
+
 	// Claude Code version check
 	MinClaudeCodeVersion string
 	MaxClaudeCodeVersion string
@@ -220,6 +231,8 @@ type SystemSettings struct {
 	PaymentVisibleMethodWxpayEnabled  bool
 
 	// OpenAI 账号调度
+	OpenAILowUpstreamRatePriorityEnabled                   bool
+	OpenAIOAuthSchedulingRateMultiplier                    float64
 	OpenAIAdvancedSchedulerEnabled                         bool
 	OpenAIAdvancedSchedulerStickyWeightedEnabled           bool
 	OpenAIAdvancedSchedulerSubscriptionPriorityEnabled     bool
@@ -231,6 +244,7 @@ type SystemSettings struct {
 	OpenAIAdvancedSchedulerWeightTTFT                      string
 	OpenAIAdvancedSchedulerWeightReset                     string
 	OpenAIAdvancedSchedulerWeightQuotaHeadroom             string
+	OpenAIAdvancedSchedulerWeightUpstreamCost              string
 	OpenAIAdvancedSchedulerWeightPreviousResponse          string
 	OpenAIAdvancedSchedulerWeightSessionSticky             string
 	OpenAIAdvancedSchedulerEffectiveLBTopK                 string
@@ -241,6 +255,7 @@ type SystemSettings struct {
 	OpenAIAdvancedSchedulerEffectiveWeightTTFT             string
 	OpenAIAdvancedSchedulerEffectiveWeightReset            string
 	OpenAIAdvancedSchedulerEffectiveWeightQuotaHeadroom    string
+	OpenAIAdvancedSchedulerEffectiveWeightUpstreamCost     string
 	OpenAIAdvancedSchedulerEffectiveWeightPreviousResponse string
 	OpenAIAdvancedSchedulerEffectiveWeightSessionSticky    string
 
@@ -277,6 +292,7 @@ type PublicSettings struct {
 	PasswordResetEnabled             bool
 	InvitationCodeEnabled            bool
 	TotpEnabled                      bool // TOTP 双因素认证
+	PasskeyEnabled                   bool
 	LoginAgreementEnabled            bool
 	LoginAgreementMode               string
 	LoginAgreementUpdatedAt          string
@@ -291,6 +307,7 @@ type PublicSettings struct {
 	ContactInfo                      string
 	DocURL                           string
 	HomeContent                      string
+	CompactHomeEnabled               bool
 	HideCcsImportButton              bool
 
 	PurchaseSubscriptionEnabled bool
@@ -325,6 +342,10 @@ type PublicSettings struct {
 
 	// Available Channels feature (user-facing aggregate view)
 	AvailableChannelsEnabled bool `json:"available_channels_enabled"`
+
+	// Model Plaza feature (public group/model pricing showcase)
+	ModelPlazaEnabled     bool `json:"model_plaza_enabled"`
+	ModelPlazaRequireAuth bool `json:"model_plaza_require_auth"`
 
 	// Affiliate (邀请返利) feature toggle
 	AffiliateEnabled bool `json:"affiliate_enabled"`

@@ -155,6 +155,9 @@ func GroupFromServiceAdmin(g *service.Group) *AdminGroup {
 	}
 	out := &AdminGroup{
 		Group:                       groupFromServiceBase(g),
+		ProfitControlEnabled:        g.ProfitControlEnabled,
+		ProfitMinMargin:             g.ProfitMinMargin,
+		ProfitSafetyBuffer:          g.ProfitSafetyBuffer,
 		ModelRouting:                g.ModelRouting,
 		ModelRoutingEnabled:         g.ModelRoutingEnabled,
 		MCPXMLInject:                g.MCPXMLInject,
@@ -213,9 +216,12 @@ func groupFromServiceBase(g *service.Group) Group {
 		FallbackGroupID:                 g.FallbackGroupID,
 		FallbackGroupIDOnInvalidRequest: g.FallbackGroupIDOnInvalidRequest,
 		AllowMessagesDispatch:           g.AllowMessagesDispatch,
+		AllowLive:                       g.AllowLive,
 		RequireOAuthOnly:                g.RequireOAuthOnly,
 		RequirePrivacySet:               g.RequirePrivacySet,
 		RPMLimit:                        g.RPMLimit,
+		MaxReasoningEffort:              g.MaxReasoningEffort,
+		ReasoningEffortMappings:         g.ReasoningEffortMappings,
 		CreatedAt:                       g.CreatedAt,
 		UpdatedAt:                       g.UpdatedAt,
 	}
@@ -226,6 +232,11 @@ func AccountFromServiceShallow(a *service.Account) *Account {
 		return nil
 	}
 	redactedCreds, credsStatus := RedactCredentials(a.Credentials)
+	extra := redactAccountManagedExtra(a.Extra)
+	var ollamaCloudUsage *service.OllamaCloudUsageState
+	if state := service.OllamaCloudUsageStateFromAccount(a); state.Eligible {
+		ollamaCloudUsage = state
+	}
 	out := &Account{
 		ID:                      a.ID,
 		Name:                    a.Name,
@@ -234,7 +245,8 @@ func AccountFromServiceShallow(a *service.Account) *Account {
 		Type:                    a.Type,
 		Credentials:             redactedCreds,
 		CredentialsStatus:       credsStatus,
-		Extra:                   a.Extra,
+		Extra:                   extra,
+		OllamaCloudUsage:        ollamaCloudUsage,
 		ProxyID:                 a.ProxyID,
 		ProxyFallbackOriginID:   a.ProxyFallbackOriginID,
 		ProxyFallbackOriginName: a.ProxyFallbackOriginName,
@@ -390,6 +402,24 @@ func AccountFromServiceShallow(a *service.Account) *Account {
 	}
 
 	return out
+}
+
+func redactAccountManagedExtra(extra map[string]any) map[string]any {
+	if extra == nil {
+		return nil
+	}
+	redacted := make(map[string]any, len(extra))
+	for key, value := range extra {
+		switch key {
+		case service.OllamaCloudUsageSessionExtraKey,
+			service.OllamaCloudUsageAutoRefreshExtraKey,
+			service.OllamaCloudUsageSnapshotExtraKey:
+			continue
+		default:
+			redacted[key] = value
+		}
+	}
+	return redacted
 }
 
 func AccountFromService(a *service.Account) *Account {
@@ -642,6 +672,8 @@ func usageLogFromServiceUser(l *service.UsageLog) UsageLog {
 		ImageSize:                 l.ImageSize,
 		ImageInputSize:            l.ImageInputSize,
 		ImageOutputSize:           l.ImageOutputSize,
+		ImageInputTokens:          l.ImageInputTokens,
+		ImageInputCost:            l.ImageInputCost,
 		ImageOutputTokens:         l.ImageOutputTokens,
 		ImageOutputCost:           l.ImageOutputCost,
 		ImageSizeSource:           l.ImageSizeSource,
@@ -649,6 +681,7 @@ func usageLogFromServiceUser(l *service.UsageLog) UsageLog {
 		MediaType:                 l.MediaType,
 		UserAgent:                 l.UserAgent,
 		IPAddress:                 l.IPAddress,
+		SessionID:                 l.SessionID,
 		CacheTTLOverridden:        l.CacheTTLOverridden,
 		BillingMode:               l.BillingMode,
 		CreatedAt:                 l.CreatedAt,
