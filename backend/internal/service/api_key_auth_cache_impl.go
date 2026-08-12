@@ -14,8 +14,8 @@ import (
 	"github.com/dgraph-io/ristretto"
 )
 
-// v19 combines gift-credit expiry constraints with group profit-control fields.
-// Incrementing the version forces snapshots created before either field set existed to reload.
+// v19 forces a refresh for snapshots created before gift-credit expiry,
+// group profit-control, or group search/audio/video pricing fields existed.
 const apiKeyAuthSnapshotVersion = 19
 
 type apiKeyAuthCacheConfig struct {
@@ -429,7 +429,12 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 			VideoPrice480P:                  apiKey.Group.VideoPrice480P,
 			VideoPrice720P:                  apiKey.Group.VideoPrice720P,
 			VideoPrice1080P:                 apiKey.Group.VideoPrice1080P,
+			VideoModelPrices:                NormalizeVideoModelPrices(apiKey.Group.VideoModelPrices),
 			WebSearchPricePerCall:           apiKey.Group.WebSearchPricePerCall,
+			SearchPricePer1k:                apiKey.Group.SearchPricePer1k,
+			AudioRealtimePricePerMin:        apiKey.Group.AudioRealtimePricePerMin,
+			AudioTTSPricePerMillionChars:    apiKey.Group.AudioTTSPricePerMillionChars,
+			AudioSTTPricePerHour:            apiKey.Group.AudioSTTPricePerHour,
 			ClaudeCodeOnly:                  apiKey.Group.ClaudeCodeOnly,
 			FallbackGroupID:                 apiKey.Group.FallbackGroupID,
 			FallbackGroupIDOnInvalidRequest: apiKey.Group.FallbackGroupIDOnInvalidRequest,
@@ -539,7 +544,12 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 			VideoPrice480P:                  snapshot.Group.VideoPrice480P,
 			VideoPrice720P:                  snapshot.Group.VideoPrice720P,
 			VideoPrice1080P:                 snapshot.Group.VideoPrice1080P,
+			VideoModelPrices:                NormalizeVideoModelPrices(snapshot.Group.VideoModelPrices),
 			WebSearchPricePerCall:           snapshot.Group.WebSearchPricePerCall,
+			SearchPricePer1k:                snapshot.Group.SearchPricePer1k,
+			AudioRealtimePricePerMin:        snapshot.Group.AudioRealtimePricePerMin,
+			AudioTTSPricePerMillionChars:    snapshot.Group.AudioTTSPricePerMillionChars,
+			AudioSTTPricePerHour:            snapshot.Group.AudioSTTPricePerHour,
 			ClaudeCodeOnly:                  snapshot.Group.ClaudeCodeOnly,
 			FallbackGroupID:                 snapshot.Group.FallbackGroupID,
 			FallbackGroupIDOnInvalidRequest: snapshot.Group.FallbackGroupIDOnInvalidRequest,
