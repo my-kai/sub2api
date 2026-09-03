@@ -563,6 +563,7 @@ export interface Group {
   description: string | null
   platform: GroupPlatform
   rate_multiplier: number
+  model_rate_multipliers?: Array<{ model: string; rate_multiplier: number }>
   rpm_limit?: number // Group-level RPM cap (0 = unlimited); overrides user-level rpm_limit when set
   max_reasoning_effort?: string // OpenAI/Codex reasoning ceiling; empty means unlimited
   max_reasoning_effort_over_limit?: string // downgrade (default) or deny when over the ceiling
@@ -1179,6 +1180,9 @@ export interface Account {
     }
   } & Record<string, unknown>)
   proxy_id: number | null
+  egress_proxy_ids?: number[]
+  egress_include_local?: boolean
+  egress_capacities?: Array<{ host: string; capacity: number }>
   proxy_fallback_origin_id?: number | null
   proxy_fallback_origin_name?: string | null
   concurrency: number
@@ -1461,6 +1465,8 @@ export interface CreateAccountRequest {
   credentials: Record<string, unknown>
   extra?: Record<string, unknown>
   proxy_id?: number | null
+  egress_proxy_ids?: number[]
+  egress_include_local?: boolean
   concurrency?: number
   load_factor?: number | null
   priority?: number
@@ -1479,6 +1485,8 @@ export interface UpdateAccountRequest {
   credentials?: Record<string, unknown>
   extra?: Record<string, unknown>
   proxy_id?: number | null
+  egress_proxy_ids?: number[]
+  egress_include_local?: boolean
   concurrency?: number
   load_factor?: number | null
   priority?: number
@@ -1716,6 +1724,7 @@ export interface UsageLog {
   // User-Agent
   user_agent: string | null
   ip_address?: string | null
+  egress_host?: string | null
 
   // Cache TTL Override
   cache_ttl_overridden: boolean

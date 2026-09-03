@@ -21,6 +21,30 @@ export interface LiveCapability {
   reason?: string
 }
 
+export interface GroupModelRateMultiplierEntry {
+  id: number
+  group_id: number
+  model: string
+  rate_multiplier: number
+  created_at: string
+  updated_at: string
+}
+
+export async function getGroupModelRateMultipliers(id: number): Promise<GroupModelRateMultiplierEntry[]> {
+  const { data } = await apiClient.get<GroupModelRateMultiplierEntry[]>(`/admin/groups/${id}/model-rate-multipliers`)
+  return data
+}
+
+export async function batchSetGroupModelRateMultipliers(id: number, entries: Array<{ model: string; rate_multiplier: number }>): Promise<{ message: string }> {
+  const { data } = await apiClient.put<{ message: string }>(`/admin/groups/${id}/model-rate-multipliers`, { entries })
+  return data
+}
+
+export async function clearGroupModelRateMultipliers(id: number): Promise<{ message: string }> {
+  const { data } = await apiClient.delete<{ message: string }>(`/admin/groups/${id}/model-rate-multipliers`)
+  return data
+}
+
 /**
  * List all groups with pagination
  * @param page - Page number (default: 1)
@@ -498,7 +522,10 @@ export const groupsAPI = {
   batchSetGroupRPMOverrides,
   updateSortOrder,
   getUsageSummary,
-  getCapacitySummary
+  getCapacitySummary,
+  getGroupModelRateMultipliers,
+  batchSetGroupModelRateMultipliers,
+  clearGroupModelRateMultipliers
 }
 
 export default groupsAPI

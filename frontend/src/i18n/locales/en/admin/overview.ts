@@ -948,6 +948,8 @@ export default {
       nameRequired: 'Please enter group name',
       rateMultipliers: 'Rate Multipliers',
       rateMultipliersTitle: 'Group Rate Multipliers',
+      modelRateMultipliers: 'Model Rates',
+      modelRateMultipliersTitle: 'Group Model Rates',
       addUserRate: 'Add User Rate Multiplier',
       rpmOverrides: 'RPM Overrides',
       rpmOverridesTitle: 'Group RPM Overrides',

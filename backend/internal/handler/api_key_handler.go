@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	modelratemultiplier "github.com/Wei-Shaw/sub2api/internal/custom/modelratemultiplier/service"
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
@@ -20,14 +21,19 @@ import (
 
 // APIKeyHandler handles API key-related requests
 type APIKeyHandler struct {
-	apiKeyService *service.APIKeyService
+	apiKeyService    *service.APIKeyService
+	modelRateService *modelratemultiplier.Service
 }
 
 // NewAPIKeyHandler creates a new APIKeyHandler
-func NewAPIKeyHandler(apiKeyService *service.APIKeyService) *APIKeyHandler {
-	return &APIKeyHandler{
+func NewAPIKeyHandler(apiKeyService *service.APIKeyService, modelRateServices ...*modelratemultiplier.Service) *APIKeyHandler {
+	h := &APIKeyHandler{
 		apiKeyService: apiKeyService,
 	}
+	if len(modelRateServices) > 0 {
+		h.modelRateService = modelRateServices[0]
+	}
+	return h
 }
 
 // CreateAPIKeyRequest represents the create API key request payload
@@ -333,8 +339,23 @@ func (h *APIKeyHandler) GetAvailableGroups(c *gin.Context) {
 	}
 
 	out := make([]dto.Group, 0, len(groups))
+	groupIDs := make([]int64, 0, len(groups))
 	for i := range groups {
-		out = append(out, *dto.GroupFromService(&groups[i]))
+		mapped := dto.GroupFromService(&groups[i])
+		out = append(out, *mapped)
+		groupIDs = append(groupIDs, groups[i].ID)
+	}
+	if h.modelRateService != nil {
+		overrides, err := h.modelRateService.EntriesForGroups(c.Request.Context(), groupIDs)
+		if err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+		for i := range out {
+			for _, entry := range overrides[out[i].ID] {
+				out[i].ModelRateMultipliers = append(out[i].ModelRateMultipliers, dto.ModelRateMultiplier{Model: entry.Model, RateMultiplier: entry.RateMultiplier})
+			}
+		}
 	}
 	response.Success(c, out)
 }

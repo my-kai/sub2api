@@ -962,6 +962,8 @@ export default {
       nameRequired: '请输入分组名称',
       rateMultipliers: '专属倍率',
       rateMultipliersTitle: '分组专属倍率管理',
+      modelRateMultipliers: '模型倍率',
+      modelRateMultipliersTitle: '分组模型倍率管理',
       addUserRate: '添加用户专属倍率',
       rpmOverrides: '专属 RPM',
       rpmOverridesTitle: '分组专属 RPM 管理',

@@ -35,6 +35,16 @@ func (s *GatewayService) ResolveUserGroupRateMultiplier(ctx context.Context, use
 	return s.getUserGroupRateMultiplier(ctx, userID, groupID, groupDefaultMultiplier)
 }
 
+// ResolveTokenRateMultiplier applies user-specific, model-specific and group
+// default priority for token billing. Media-specific multipliers remain outside
+// this resolver and continue through their existing billing paths.
+func (s *GatewayService) ResolveTokenRateMultiplier(ctx context.Context, userID, groupID int64, model string, groupDefaultMultiplier float64) float64 {
+	if s != nil && s.modelRateService != nil {
+		return s.modelRateService.Resolve(ctx, userID, groupID, model, groupDefaultMultiplier)
+	}
+	return s.ResolveUserGroupRateMultiplier(ctx, userID, groupID, groupDefaultMultiplier)
+}
+
 // RecordUsageInput 记录使用量的输入参数。
 // 异步 worker 只接收计费所需快照，不能持有 ParsedRequest/RequestBodyRef 这类大请求体引用。
 type RecordUsageInput struct {
@@ -779,23 +789,11 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		cacheTTLOverridden = (result.Usage.CacheCreation5mTokens + result.Usage.CacheCreation1hTokens) > 0
 	}
 
-	// 获取费率倍数（优先级：用户专属 > 分组默认 > 系统默认）
+	// 先确定计费模型，再解析模型感知倍率；否则模型特殊倍率无法命中。
 	multiplier := 1.0
 	if s.cfg != nil {
 		multiplier = s.cfg.Default.RateMultiplier
 	}
-	if apiKey.GroupID != nil && apiKey.Group != nil {
-		groupDefault := apiKey.Group.RateMultiplier
-		multiplier = s.ResolveUserGroupRateMultiplier(ctx, user.ID, *apiKey.GroupID, groupDefault)
-	}
-	// token 倍率叠加高峰因子（token 计费含图片 token，图片按次倍率不受影响）。高峰因子按请求时刻现算，
-	// 不并入上面的 getUserGroupRateMultiplier，以免污染 user:group 倍率缓存。
-	pricingAt := input.PricingAt
-	if pricingAt.IsZero() {
-		pricingAt = timezone.Now()
-	}
-	multiplier, imageMultiplier := computePeakAwareMultipliers(apiKey, multiplier, pricingAt)
-
 	// 确定计费模型
 	concreteBillingModel := forwardResultBillingModel(result.Model, result.UpstreamModel)
 	billingModel := concreteBillingModel
@@ -815,6 +813,15 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	// 通用兜底（与 OpenAI 路径的 usageBillingModelCandidates 语义对齐）：
 	// 选定模型查不到任何价格时回退到实际转发的具体模型。已定价流量不受影响。
 	billingModel = s.billableModelWithFallback(ctx, apiKey, billingModel, result.UpstreamModel, result.Model)
+	if apiKey.GroupID != nil && apiKey.Group != nil {
+		multiplier = s.ResolveTokenRateMultiplier(ctx, user.ID, *apiKey.GroupID, billingModel, apiKey.Group.RateMultiplier)
+	}
+	// token 倍率叠加高峰因子（token 计费含图片 token，图片按次倍率不受影响）。
+	pricingAt := input.PricingAt
+	if pricingAt.IsZero() {
+		pricingAt = timezone.Now()
+	}
+	multiplier, imageMultiplier := computePeakAwareMultipliers(apiKey, multiplier, pricingAt)
 
 	// 确定 RequestedModel（渠道映射前的原始模型）
 	requestedModel := result.Model
@@ -1182,6 +1189,7 @@ func (s *GatewayService) buildRecordUsageLog(
 		UserID:                   user.ID,
 		APIKeyID:                 apiKey.ID,
 		AccountID:                account.ID,
+		EgressHost:               optionalTrimmedStringPtr(account.SelectedEgressHost),
 		RequestID:                requestID,
 		Model:                    result.Model,
 		RequestedModel:           requestedModel,

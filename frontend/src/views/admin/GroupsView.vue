@@ -422,6 +422,13 @@
                 }}</span>
               </button>
               <button
+                @click="handleModelRateMultipliers(row)"
+                class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-green-600 dark:hover:bg-dark-700 dark:hover:text-green-400"
+              >
+                <Icon name="dollar" size="sm" />
+                <span class="text-xs">{{ t('admin.groups.modelRateMultipliers') }}</span>
+              </button>
+              <button
                 @click="handleRPMOverrides(row)"
                 class="flex flex-col items-center gap-0.5 rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-orange-600 dark:hover:bg-dark-700 dark:hover:text-orange-400"
               >
@@ -4545,6 +4552,13 @@
       @success="loadGroups"
     />
 
+    <GroupModelRateMultipliersModal
+      :show="showModelRateMultipliersModal"
+      :group="modelRateMultipliersGroup"
+      @close="showModelRateMultipliersModal = false"
+      @success="loadGroups"
+    />
+
     <!-- Group RPM Overrides Modal -->
     <GroupRPMOverridesModal
       :show="showRPMOverridesModal"
@@ -4587,6 +4601,7 @@ import Select from "@/components/common/Select.vue";
 import PlatformIcon from "@/components/common/PlatformIcon.vue";
 import Icon from "@/components/icons/Icon.vue";
 import GroupRateMultipliersModal from "@/components/admin/group/GroupRateMultipliersModal.vue";
+import GroupModelRateMultipliersModal from "@/components/admin/group/GroupModelRateMultipliersModal.vue";
 import GroupRPMOverridesModal from "@/components/admin/group/GroupRPMOverridesModal.vue";
 import GroupCapacityBadge from "@/components/common/GroupCapacityBadge.vue";
 import ReasoningEffortPolicyFields from "@/components/admin/group/ReasoningEffortPolicyFields.vue";
@@ -5128,6 +5143,8 @@ const deletingGroup = ref<AdminGroup | null>(null);
 const duplicatingGroupIds = reactive(new Set<number>());
 const showRateMultipliersModal = ref(false);
 const rateMultipliersGroup = ref<AdminGroup | null>(null);
+const showModelRateMultipliersModal = ref(false);
+const modelRateMultipliersGroup = ref<AdminGroup | null>(null);
 const showRPMOverridesModal = ref(false);
 const rpmOverridesGroup = ref<AdminGroup | null>(null);
 const sortableGroups = ref<AdminGroup[]>([]);
@@ -6597,6 +6614,11 @@ const handleDuplicate = async (group: AdminGroup) => {
   } finally {
     duplicatingGroupIds.delete(group.id);
   }
+};
+
+const handleModelRateMultipliers = (group: AdminGroup) => {
+  modelRateMultipliersGroup.value = group
+  showModelRateMultipliersModal.value = true
 };
 
 const compositeRouteMatchLabel = (matchType: CompositeRouteMatchType) =>

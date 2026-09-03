@@ -304,6 +304,7 @@ func (s *OAuthService) RefreshToken(ctx context.Context, refreshToken string, pr
 
 // RefreshAccountToken refreshes token for an account
 func (s *OAuthService) RefreshAccountToken(ctx context.Context, account *Account) (*TokenInfo, error) {
+	account = account.SelectEgressForRequest()
 	refreshToken := account.GetCredential("refresh_token")
 	if refreshToken == "" {
 		return nil, fmt.Errorf("no refresh token available")

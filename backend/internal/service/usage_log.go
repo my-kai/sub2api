@@ -182,6 +182,8 @@ type UsageLog struct {
 	FirstTokenMs       *int
 	UserAgent          *string
 	IPAddress          *string
+	// EgressHost records the configured proxy host or "local" for direct requests.
+	EgressHost *string
 	// SessionID is the explicit client-provided request correlation identifier
 	// (e.g. the session_id / X-Session-Id headers). Nil when the client sent no
 	// valid session header. It is never derived from prompt_cache_key or content.

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	customegress "github.com/Wei-Shaw/sub2api/internal/custom/egress"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
@@ -262,6 +263,8 @@ func AccountFromServiceShallow(a *service.Account) *Account {
 		ProxyID:                 a.ProxyID,
 		ProxyFallbackOriginID:   a.ProxyFallbackOriginID,
 		ProxyFallbackOriginName: a.ProxyFallbackOriginName,
+		EgressProxyIDs:          append([]int64(nil), a.EgressProxyIDs...),
+		EgressIncludeLocal:      a.EgressIncludeLocal,
 		Concurrency:             a.Concurrency,
 		LoadFactor:              a.LoadFactor,
 		Priority:                a.Priority,
@@ -285,6 +288,20 @@ func AccountFromServiceShallow(a *service.Account) *Account {
 		GroupIDs:                a.GroupIDs,
 		ParentAccountID:         a.ParentAccountID,
 		QuotaDimension:          a.QuotaDimension,
+	}
+	if len(a.EgressProxyIDs) > 0 || a.EgressIncludeLocal {
+		hosts := make([]string, 0, len(a.EgressProxies)+1)
+		if a.EgressIncludeLocal {
+			hosts = append(hosts, customegress.LocalHost)
+		}
+		for _, proxy := range a.EgressProxies {
+			if proxy != nil {
+				hosts = append(hosts, proxy.Host)
+			}
+		}
+		for _, row := range customegress.Capacities(a.Concurrency, hosts) {
+			out.EgressCapacities = append(out.EgressCapacities, EgressCapacity{Host: row.Host, Capacity: row.Capacity})
+		}
 	}
 
 	// 提取 5h 窗口费用控制和会话数量控制配置（仅 Anthropic OAuth/SetupToken 账号有效）
@@ -694,6 +711,7 @@ func usageLogFromServiceUser(l *service.UsageLog) UsageLog {
 		MediaType:                 l.MediaType,
 		UserAgent:                 l.UserAgent,
 		IPAddress:                 l.IPAddress,
+		EgressHost:                l.EgressHost,
 		SessionID:                 l.SessionID,
 		CacheTTLOverridden:        l.CacheTTLOverridden,
 		BillingMode:               l.BillingMode,

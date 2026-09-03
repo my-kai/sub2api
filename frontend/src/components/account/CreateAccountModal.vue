@@ -2919,7 +2919,7 @@
           <label class="input-label mb-0">{{ t('admin.accounts.proxy') }}</label>
           <ProxyAdBanner />
         </div>
-        <ProxySelector v-model="form.proxy_id" :proxies="proxies" />
+        <ProxySelector v-model="egressSelection" :proxies="proxies" multiple />
       </div>
 
       <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -4520,12 +4520,23 @@ const form = reactive({
   type: 'oauth' as AccountType, // Will be 'oauth', 'setup-token', or 'apikey'
   credentials: {} as Record<string, unknown>,
   proxy_id: null as number | null,
+  egress_proxy_ids: [] as number[],
+  egress_include_local: true,
   concurrency: 10,
   load_factor: null as number | null,
   priority: 1,
   rate_multiplier: 1,
   group_ids: [] as number[],
   expires_at: null as number | null
+})
+
+const egressSelection = computed<number[]>({
+  get: () => [...(form.egress_include_local ? [0] : []), ...form.egress_proxy_ids],
+  set: (values) => {
+    form.egress_include_local = values.includes(0)
+    form.egress_proxy_ids = values.filter((id) => id > 0)
+    form.proxy_id = form.egress_proxy_ids[0] ?? null
+  }
 })
 
 // Helper to check if current type needs OAuth flow
@@ -5092,6 +5103,8 @@ const resetForm = () => {
   form.type = 'oauth'
   form.credentials = {}
   form.proxy_id = null
+  form.egress_proxy_ids = []
+  form.egress_include_local = true
   form.concurrency = 10
   form.load_factor = null
   form.priority = 1
@@ -5402,6 +5415,10 @@ const handleVertexServiceAccountDrop = async (event: DragEvent) => {
 }
 
 const handleSubmit = async () => {
+  if (egressSelection.value.length === 0) {
+    appStore.showError(t('admin.accounts.egressRequired'))
+    return
+  }
   // For OAuth-based type, handle OAuth flow (goes to step 2)
   if (isOAuthFlow.value) {
     if (!isGrokSSOInputMethod.value && !form.name.trim()) {
@@ -5772,6 +5789,8 @@ const createAccountAndFinish = async (
     credentials,
     extra: finalExtra,
     proxy_id: form.proxy_id,
+    egress_proxy_ids: form.egress_proxy_ids,
+    egress_include_local: form.egress_include_local,
     concurrency: form.concurrency,
     load_factor: form.load_factor ?? undefined,
     priority: form.priority,

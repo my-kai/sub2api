@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -61,10 +63,17 @@ type Account struct {
 	ParentAccountID *int64 // non-nil → 影子账号（不持凭据，透传母账号凭据）
 	QuotaDimension  string // 用量维度："" / "global" / "spark"
 
-	Proxy         *Proxy
-	AccountGroups []AccountGroup
-	GroupIDs      []int64
-	Groups        []*Group
+	Proxy *Proxy
+	// EgressProxyIDs stores the ordered proxy exits selected for this account.
+	EgressProxyIDs []int64
+	// EgressIncludeLocal controls whether direct connection is part of the exit pool.
+	EgressIncludeLocal bool
+	EgressProxies      []*Proxy
+	// SelectedEgressHost is set only on a request-scoped account clone.
+	SelectedEgressHost string
+	AccountGroups      []AccountGroup
+	GroupIDs           []int64
+	Groups             []*Group
 
 	// model_mapping 热路径缓存（非持久化字段）
 	modelMappingCache               map[string]string
@@ -82,6 +91,52 @@ type Account struct {
 	headerOverrideCacheRawPtr         uintptr
 	headerOverrideCacheRawLen         int
 	headerOverrideCacheRawSig         uint64
+}
+
+var accountEgressCursors sync.Map // account ID -> *atomic.Uint64
+
+// SelectEgressForRequest clones the account and binds one configured exit to the request.
+// Keeping the selected proxy on a clone prevents concurrent requests from sharing mutable routing state.
+func (a *Account) SelectEgressForRequest() *Account {
+	if a == nil {
+		return nil
+	}
+	proxy, host := a.NextEgressProxy()
+	clone := *a
+	clone.Proxy = proxy
+	clone.SelectedEgressHost = host
+	if proxy == nil {
+		clone.ProxyID = nil
+	} else {
+		id := proxy.ID
+		clone.ProxyID = &id
+	}
+	return &clone
+}
+
+// NextEgressProxy returns the next configured proxy and its audit host.
+// The caller owns the returned selection for the current request.
+func (a *Account) NextEgressProxy() (*Proxy, string) {
+	if a == nil {
+		return nil, ""
+	}
+	exits := make([]*Proxy, 0, len(a.EgressProxies)+1)
+	if a.EgressIncludeLocal {
+		exits = append(exits, nil)
+	}
+	exits = append(exits, a.EgressProxies...)
+	if len(exits) == 0 {
+		return nil, ""
+	}
+	state := &atomic.Uint64{}
+	if current, loaded := accountEgressCursors.LoadOrStore(a.ID, state); loaded {
+		state = current.(*atomic.Uint64)
+	}
+	p := exits[(state.Add(1)-1)%uint64(len(exits))]
+	if p == nil {
+		return nil, "local"
+	}
+	return p, p.Host
 }
 
 type OpenAIEndpointCapability string

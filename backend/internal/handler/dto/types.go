@@ -98,8 +98,10 @@ type Group struct {
 	Description    string  `json:"description"`
 	Platform       string  `json:"platform"`
 	RateMultiplier float64 `json:"rate_multiplier"`
-	IsExclusive    bool    `json:"is_exclusive"`
-	Status         string  `json:"status"`
+	// ModelRateMultipliers contains user-visible exact model overrides for key selection.
+	ModelRateMultipliers []ModelRateMultiplier `json:"model_rate_multipliers,omitempty"`
+	IsExclusive          bool                  `json:"is_exclusive"`
+	Status               string                `json:"status"`
 
 	SubscriptionType          string   `json:"subscription_type"`
 	DailyLimitUSD             *float64 `json:"daily_limit_usd"`
@@ -164,6 +166,12 @@ type Group struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// ModelRateMultiplier is the public display shape of a group model override.
+type ModelRateMultiplier struct {
+	Model          string  `json:"model"`
+	RateMultiplier float64 `json:"rate_multiplier"`
+}
+
 // AdminGroup 是管理员接口使用的 group DTO（包含敏感/内部字段）。
 // 注意：普通用户接口不得返回 model_routing/account_count/account_groups 等内部信息。
 type AdminGroup struct {
@@ -219,6 +227,9 @@ type Account struct {
 	ProxyID                 *int64                         `json:"proxy_id"`
 	ProxyFallbackOriginID   *int64                         `json:"proxy_fallback_origin_id"`
 	ProxyFallbackOriginName *string                        `json:"proxy_fallback_origin_name,omitempty"`
+	EgressProxyIDs          []int64                        `json:"egress_proxy_ids,omitempty"`
+	EgressIncludeLocal      bool                           `json:"egress_include_local"`
+	EgressCapacities        []EgressCapacity               `json:"egress_capacities,omitempty"`
 	Concurrency             int                            `json:"concurrency"`
 	LoadFactor              *int                           `json:"load_factor,omitempty"`
 	Priority                int                            `json:"priority"`
@@ -322,6 +333,12 @@ type Account struct {
 
 	GroupIDs []int64  `json:"group_ids,omitempty"`
 	Groups   []*Group `json:"groups,omitempty"`
+}
+
+// EgressCapacity is one configured host's share of the account concurrency limit.
+type EgressCapacity struct {
+	Host     string `json:"host"`
+	Capacity int    `json:"capacity"`
 }
 
 type AccountGroup struct {
@@ -552,7 +569,8 @@ type UsageLog struct {
 	// User-Agent
 	UserAgent *string `json:"user_agent"`
 	// IPAddress is visible to the owner of the usage record.
-	IPAddress *string `json:"ip_address,omitempty"`
+	IPAddress  *string `json:"ip_address,omitempty"`
+	EgressHost *string `json:"egress_host,omitempty"`
 	// SessionID is the explicit client-provided request correlation identifier
 	// (e.g. the session_id / X-Session-Id headers). Omitted when absent.
 	SessionID *string `json:"session_id,omitempty"`

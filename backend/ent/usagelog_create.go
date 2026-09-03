@@ -491,6 +491,20 @@ func (_c *UsageLogCreate) SetNillableIPAddress(v *string) *UsageLogCreate {
 	return _c
 }
 
+// SetEgressHost sets the "egress_host" field.
+func (_c *UsageLogCreate) SetEgressHost(v string) *UsageLogCreate {
+	_c.mutation.SetEgressHost(v)
+	return _c
+}
+
+// SetNillableEgressHost sets the "egress_host" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableEgressHost(v *string) *UsageLogCreate {
+	if v != nil {
+		_c.SetEgressHost(*v)
+	}
+	return _c
+}
+
 // SetImageCount sets the "image_count" field.
 func (_c *UsageLogCreate) SetImageCount(v int) *UsageLogCreate {
 	_c.mutation.SetImageCount(v)
@@ -894,6 +908,11 @@ func (_c *UsageLogCreate) check() error {
 			return &ValidationError{Name: "ip_address", err: fmt.Errorf(`ent: validator failed for field "UsageLog.ip_address": %w`, err)}
 		}
 	}
+	if v, ok := _c.mutation.EgressHost(); ok {
+		if err := usagelog.EgressHostValidator(v); err != nil {
+			return &ValidationError{Name: "egress_host", err: fmt.Errorf(`ent: validator failed for field "UsageLog.egress_host": %w`, err)}
+		}
+	}
 	if _, ok := _c.mutation.ImageCount(); !ok {
 		return &ValidationError{Name: "image_count", err: errors.New(`ent: missing required field "UsageLog.image_count"`)}
 	}
@@ -1090,6 +1109,10 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.IPAddress(); ok {
 		_spec.SetField(usagelog.FieldIPAddress, field.TypeString, value)
 		_node.IPAddress = &value
+	}
+	if value, ok := _c.mutation.EgressHost(); ok {
+		_spec.SetField(usagelog.FieldEgressHost, field.TypeString, value)
+		_node.EgressHost = &value
 	}
 	if value, ok := _c.mutation.ImageCount(); ok {
 		_spec.SetField(usagelog.FieldImageCount, field.TypeInt, value)
@@ -1899,6 +1922,24 @@ func (u *UsageLogUpsert) UpdateIPAddress() *UsageLogUpsert {
 // ClearIPAddress clears the value of the "ip_address" field.
 func (u *UsageLogUpsert) ClearIPAddress() *UsageLogUpsert {
 	u.SetNull(usagelog.FieldIPAddress)
+	return u
+}
+
+// SetEgressHost sets the "egress_host" field.
+func (u *UsageLogUpsert) SetEgressHost(v string) *UsageLogUpsert {
+	u.Set(usagelog.FieldEgressHost, v)
+	return u
+}
+
+// UpdateEgressHost sets the "egress_host" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateEgressHost() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldEgressHost)
+	return u
+}
+
+// ClearEgressHost clears the value of the "egress_host" field.
+func (u *UsageLogUpsert) ClearEgressHost() *UsageLogUpsert {
+	u.SetNull(usagelog.FieldEgressHost)
 	return u
 }
 
@@ -2859,6 +2900,27 @@ func (u *UsageLogUpsertOne) UpdateIPAddress() *UsageLogUpsertOne {
 func (u *UsageLogUpsertOne) ClearIPAddress() *UsageLogUpsertOne {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.ClearIPAddress()
+	})
+}
+
+// SetEgressHost sets the "egress_host" field.
+func (u *UsageLogUpsertOne) SetEgressHost(v string) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetEgressHost(v)
+	})
+}
+
+// UpdateEgressHost sets the "egress_host" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateEgressHost() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateEgressHost()
+	})
+}
+
+// ClearEgressHost clears the value of the "egress_host" field.
+func (u *UsageLogUpsertOne) ClearEgressHost() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearEgressHost()
 	})
 }
 
@@ -4015,6 +4077,27 @@ func (u *UsageLogUpsertBulk) UpdateIPAddress() *UsageLogUpsertBulk {
 func (u *UsageLogUpsertBulk) ClearIPAddress() *UsageLogUpsertBulk {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.ClearIPAddress()
+	})
+}
+
+// SetEgressHost sets the "egress_host" field.
+func (u *UsageLogUpsertBulk) SetEgressHost(v string) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetEgressHost(v)
+	})
+}
+
+// UpdateEgressHost sets the "egress_host" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateEgressHost() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateEgressHost()
+	})
+}
+
+// ClearEgressHost clears the value of the "egress_host" field.
+func (u *UsageLogUpsertBulk) ClearEgressHost() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearEgressHost()
 	})
 }
 

@@ -346,6 +346,7 @@ func batchUsageErrorMessage(err error) string {
 }
 
 func (s *AccountUsageService) getUsageForAccount(ctx context.Context, account *Account, forceProbe bool) (*UsageInfo, error) {
+	account = account.SelectEgressForRequest()
 	if account == nil {
 		return nil, fmt.Errorf("account is required")
 	}

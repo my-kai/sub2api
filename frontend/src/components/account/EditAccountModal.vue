@@ -1540,7 +1540,7 @@
           <label class="input-label mb-0">{{ t('admin.accounts.proxy') }}</label>
           <ProxyAdBanner />
         </div>
-        <ProxySelector v-model="form.proxy_id" :proxies="proxies" />
+        <ProxySelector v-model="egressSelection" :proxies="proxies" multiple />
       </div>
 
       <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -3590,6 +3590,8 @@ const form = reactive({
   name: '',
   notes: '',
   proxy_id: null as number | null,
+  egress_proxy_ids: [] as number[],
+  egress_include_local: true,
   concurrency: 1,
   load_factor: null as number | null,
   priority: 1,
@@ -3597,6 +3599,15 @@ const form = reactive({
   status: 'active' as 'active' | 'inactive' | 'error',
   group_ids: [] as number[],
   expires_at: null as number | null
+})
+
+const egressSelection = computed<number[]>({
+  get: () => [...(form.egress_include_local ? [0] : []), ...form.egress_proxy_ids],
+  set: (values) => {
+    form.egress_include_local = values.includes(0)
+    form.egress_proxy_ids = values.filter((id) => id > 0)
+    form.proxy_id = form.egress_proxy_ids[0] ?? null
+  }
 })
 
 const handleUpstreamBillingRateSyncChange = (enabled: boolean) => {
@@ -3698,6 +3709,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   form.name = newAccount.name
   form.notes = newAccount.notes || ''
   form.proxy_id = newAccount.proxy_id
+  form.egress_proxy_ids = [...(newAccount.egress_proxy_ids ?? (newAccount.proxy_id ? [newAccount.proxy_id] : []))]
+  form.egress_include_local = newAccount.egress_include_local ?? (newAccount.proxy_id == null)
   form.concurrency = newAccount.concurrency
   form.load_factor = newAccount.load_factor ?? null
   form.priority = newAccount.priority
@@ -4632,6 +4645,10 @@ const submitUpdateAccount = async (accountID: number, updatePayload: Record<stri
 
 const handleSubmit = async () => {
   if (!props.account) return
+  if (egressSelection.value.length === 0) {
+    appStore.showError(t('admin.accounts.egressRequired'))
+    return
+  }
   const accountID = props.account.id
 
   if (form.status !== 'active' && form.status !== 'inactive' && form.status !== 'error') {

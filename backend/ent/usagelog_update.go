@@ -752,6 +752,26 @@ func (_u *UsageLogUpdate) ClearIPAddress() *UsageLogUpdate {
 	return _u
 }
 
+// SetEgressHost sets the "egress_host" field.
+func (_u *UsageLogUpdate) SetEgressHost(v string) *UsageLogUpdate {
+	_u.mutation.SetEgressHost(v)
+	return _u
+}
+
+// SetNillableEgressHost sets the "egress_host" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableEgressHost(v *string) *UsageLogUpdate {
+	if v != nil {
+		_u.SetEgressHost(*v)
+	}
+	return _u
+}
+
+// ClearEgressHost clears the value of the "egress_host" field.
+func (_u *UsageLogUpdate) ClearEgressHost() *UsageLogUpdate {
+	_u.mutation.ClearEgressHost()
+	return _u
+}
+
 // SetImageCount sets the "image_count" field.
 func (_u *UsageLogUpdate) SetImageCount(v int) *UsageLogUpdate {
 	_u.mutation.ResetImageCount()
@@ -1086,6 +1106,11 @@ func (_u *UsageLogUpdate) check() error {
 			return &ValidationError{Name: "ip_address", err: fmt.Errorf(`ent: validator failed for field "UsageLog.ip_address": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.EgressHost(); ok {
+		if err := usagelog.EgressHostValidator(v); err != nil {
+			return &ValidationError{Name: "egress_host", err: fmt.Errorf(`ent: validator failed for field "UsageLog.egress_host": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.ImageSize(); ok {
 		if err := usagelog.ImageSizeValidator(v); err != nil {
 			return &ValidationError{Name: "image_size", err: fmt.Errorf(`ent: validator failed for field "UsageLog.image_size": %w`, err)}
@@ -1320,6 +1345,12 @@ func (_u *UsageLogUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.IPAddressCleared() {
 		_spec.ClearField(usagelog.FieldIPAddress, field.TypeString)
+	}
+	if value, ok := _u.mutation.EgressHost(); ok {
+		_spec.SetField(usagelog.FieldEgressHost, field.TypeString, value)
+	}
+	if _u.mutation.EgressHostCleared() {
+		_spec.ClearField(usagelog.FieldEgressHost, field.TypeString)
 	}
 	if value, ok := _u.mutation.ImageCount(); ok {
 		_spec.SetField(usagelog.FieldImageCount, field.TypeInt, value)
@@ -2266,6 +2297,26 @@ func (_u *UsageLogUpdateOne) ClearIPAddress() *UsageLogUpdateOne {
 	return _u
 }
 
+// SetEgressHost sets the "egress_host" field.
+func (_u *UsageLogUpdateOne) SetEgressHost(v string) *UsageLogUpdateOne {
+	_u.mutation.SetEgressHost(v)
+	return _u
+}
+
+// SetNillableEgressHost sets the "egress_host" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableEgressHost(v *string) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetEgressHost(*v)
+	}
+	return _u
+}
+
+// ClearEgressHost clears the value of the "egress_host" field.
+func (_u *UsageLogUpdateOne) ClearEgressHost() *UsageLogUpdateOne {
+	_u.mutation.ClearEgressHost()
+	return _u
+}
+
 // SetImageCount sets the "image_count" field.
 func (_u *UsageLogUpdateOne) SetImageCount(v int) *UsageLogUpdateOne {
 	_u.mutation.ResetImageCount()
@@ -2613,6 +2664,11 @@ func (_u *UsageLogUpdateOne) check() error {
 			return &ValidationError{Name: "ip_address", err: fmt.Errorf(`ent: validator failed for field "UsageLog.ip_address": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.EgressHost(); ok {
+		if err := usagelog.EgressHostValidator(v); err != nil {
+			return &ValidationError{Name: "egress_host", err: fmt.Errorf(`ent: validator failed for field "UsageLog.egress_host": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.ImageSize(); ok {
 		if err := usagelog.ImageSizeValidator(v); err != nil {
 			return &ValidationError{Name: "image_size", err: fmt.Errorf(`ent: validator failed for field "UsageLog.image_size": %w`, err)}
@@ -2864,6 +2920,12 @@ func (_u *UsageLogUpdateOne) sqlSave(ctx context.Context) (_node *UsageLog, err 
 	}
 	if _u.mutation.IPAddressCleared() {
 		_spec.ClearField(usagelog.FieldIPAddress, field.TypeString)
+	}
+	if value, ok := _u.mutation.EgressHost(); ok {
+		_spec.SetField(usagelog.FieldEgressHost, field.TypeString, value)
+	}
+	if _u.mutation.EgressHostCleared() {
+		_spec.ClearField(usagelog.FieldEgressHost, field.TypeString)
 	}
 	if value, ok := _u.mutation.ImageCount(); ok {
 		_spec.SetField(usagelog.FieldImageCount, field.TypeInt, value)

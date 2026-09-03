@@ -69,10 +69,10 @@
           <!-- No Proxy option -->
           <div
             @click="selectOption(null)"
-            :class="['select-option', modelValue === null && 'select-option-selected']"
+            :class="['select-option', isSelected(null) && 'select-option-selected']"
           >
-            <span class="select-option-label">{{ t('admin.accounts.noProxy') }}</span>
-            <Icon v-if="modelValue === null" name="check" size="sm" class="text-primary-500" />
+            <span class="select-option-label">{{ multiple ? t('admin.accounts.localEgress') : t('admin.accounts.noProxy') }}</span>
+            <Icon v-if="isSelected(null)" name="check" size="sm" class="text-primary-500" />
           </div>
 
           <!-- Proxy options -->
@@ -80,7 +80,7 @@
             v-for="proxy in filteredProxies"
             :key="proxy.id"
             @click="selectOption(proxy.id)"
-            :class="['select-option', modelValue === proxy.id && 'select-option-selected']"
+            :class="['select-option', isSelected(proxy.id) && 'select-option-selected']"
           >
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-2">
@@ -150,7 +150,7 @@
             </button>
 
             <Icon
-              v-if="modelValue === proxy.id"
+              v-if="isSelected(proxy.id)"
               name="check"
               size="sm"
               class="flex-shrink-0 text-primary-500"
@@ -187,17 +187,19 @@ interface ProxyTestResult {
 }
 
 interface Props {
-  modelValue: number | null
+  modelValue: number | null | number[]
   proxies: Proxy[]
   disabled?: boolean
+  multiple?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  disabled: false
+  disabled: false,
+  multiple: false
 })
 
 const emit = defineEmits<{
-  'update:modelValue': [value: number | null]
+  'update:modelValue': [value: number | null | number[]]
 }>()
 
 const isOpen = ref(false)
@@ -211,11 +213,19 @@ const testingProxyIds = reactive(new Set<number>())
 const batchTesting = ref(false)
 
 const selectedProxy = computed(() => {
-  if (props.modelValue === null) return null
-  return props.proxies.find((p) => p.id === props.modelValue) || null
+  if (props.multiple) return null
+  const value = Array.isArray(props.modelValue) ? null : props.modelValue
+  if (value === null) return null
+  return props.proxies.find((p) => p.id === value) || null
 })
 
 const selectedLabel = computed(() => {
+  if (props.multiple) {
+    const ids = Array.isArray(props.modelValue) ? props.modelValue : []
+    if (ids.length === 0) return t('admin.accounts.localEgress')
+    const labels = ids.filter((id) => id > 0).map((id) => props.proxies.find((proxy) => proxy.id === id)?.name).filter(Boolean)
+    return [ids.includes(0) ? t('admin.accounts.localEgress') : '', ...labels].filter(Boolean).slice(0, 4).join(', ')
+  }
   if (!selectedProxy.value) {
     return t('admin.accounts.noProxy')
   }
@@ -246,9 +256,30 @@ const toggle = () => {
 }
 
 const selectOption = (value: number | null) => {
+  if (props.multiple) {
+    const current = Array.isArray(props.modelValue) ? [...props.modelValue] : []
+    if (value === null) {
+      const index = current.indexOf(0)
+      if (index >= 0) current.splice(index, 1)
+      else current.unshift(0)
+      emit('update:modelValue', current)
+    } else {
+      const index = current.indexOf(value)
+      if (index >= 0) current.splice(index, 1)
+      else current.push(value)
+      emit('update:modelValue', current)
+    }
+    return
+  }
   emit('update:modelValue', value)
   isOpen.value = false
   searchQuery.value = ''
+}
+
+const isSelected = (value: number | null) => {
+  if (!props.multiple) return props.modelValue === value
+  if (value === null) return Array.isArray(props.modelValue) && props.modelValue.includes(0)
+  return Array.isArray(props.modelValue) && props.modelValue.includes(value)
 }
 
 const handleTestProxy = async (proxy: Proxy) => {

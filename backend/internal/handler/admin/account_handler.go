@@ -119,6 +119,8 @@ type CreateAccountRequest struct {
 	Credentials             map[string]any `json:"credentials" binding:"required"`
 	Extra                   map[string]any `json:"extra"`
 	ProxyID                 *int64         `json:"proxy_id"`
+	EgressProxyIDs          []int64        `json:"egress_proxy_ids"`
+	EgressIncludeLocal      *bool          `json:"egress_include_local"`
 	Concurrency             int            `json:"concurrency"`
 	Priority                int            `json:"priority"`
 	RateMultiplier          *float64       `json:"rate_multiplier"`
@@ -139,6 +141,8 @@ type UpdateAccountRequest struct {
 	Credentials             map[string]any `json:"credentials"`
 	Extra                   map[string]any `json:"extra"`
 	ProxyID                 *int64         `json:"proxy_id"`
+	EgressProxyIDs          *[]int64       `json:"egress_proxy_ids"`
+	EgressIncludeLocal      *bool          `json:"egress_include_local"`
 	Concurrency             *int           `json:"concurrency"`
 	Priority                *int           `json:"priority"`
 	RateMultiplier          *float64       `json:"rate_multiplier"`
@@ -831,6 +835,15 @@ func (h *AccountHandler) Create(c *gin.Context) {
 		response.ErrorFrom(c, err)
 		return
 	}
+	if req.Extra == nil {
+		req.Extra = make(map[string]any)
+	}
+	if req.EgressProxyIDs != nil {
+		req.Extra["egress_proxy_ids"] = req.EgressProxyIDs
+	}
+	if req.EgressIncludeLocal != nil {
+		req.Extra["egress_include_local"] = *req.EgressIncludeLocal
+	}
 	if req.RateMultiplier != nil && *req.RateMultiplier < 0 {
 		response.BadRequest(c, "rate_multiplier must be >= 0")
 		return
@@ -967,6 +980,17 @@ func (h *AccountHandler) Update(c *gin.Context) {
 	if req.RateMultiplier != nil && *req.RateMultiplier < 0 {
 		response.BadRequest(c, "rate_multiplier must be >= 0")
 		return
+	}
+	if req.EgressProxyIDs != nil || req.EgressIncludeLocal != nil {
+		if req.Extra == nil {
+			req.Extra = make(map[string]any)
+		}
+		if req.EgressProxyIDs != nil {
+			req.Extra["egress_proxy_ids"] = *req.EgressProxyIDs
+		}
+		if req.EgressIncludeLocal != nil {
+			req.Extra["egress_include_local"] = *req.EgressIncludeLocal
+		}
 	}
 	// base_rpm 输入校验：负值归零，超过 10000 截断
 	sanitizeExtraBaseRPM(req.Extra)

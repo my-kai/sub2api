@@ -286,6 +286,12 @@
           <span v-else class="text-sm text-gray-400 dark:text-gray-500">-</span>
         </template>
 
+        <template #cell-egress_host="{ row }">
+          <span class="block max-w-[220px] truncate font-mono text-sm text-gray-600 dark:text-gray-400" :title="row.egress_host || undefined">
+            {{ row.egress_host === 'local' ? t('admin.accounts.localEgress') : (row.egress_host || '-') }}
+          </span>
+        </template>
+
         <template #empty><EmptyState :message="t('usage.noRecords')" /></template>
       </DataTable>
     </div>

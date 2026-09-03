@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"log/slog"
+	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 )
@@ -38,9 +39,12 @@ func (s *GatewayService) withGatewayProfitControlGate(ctx context.Context, group
 	}
 
 	downstream := billingGroup.RateMultiplier
-	if userID, _ := ctx.Value(ctxkey.UserID).(int64); userID > 0 {
-		downstream = s.ResolveUserGroupRateMultiplier(ctx, userID, billingGroup.ID, billingGroup.RateMultiplier)
+	userID, _ := ctx.Value(ctxkey.UserID).(int64)
+	model, _ := ctx.Value(ctxkey.ResolvedUpstreamModel).(string)
+	if strings.TrimSpace(model) == "" {
+		model, _ = ctx.Value(ctxkey.Model).(string)
 	}
+	downstream = s.ResolveTokenRateMultiplier(ctx, userID, billingGroup.ID, model, billingGroup.RateMultiplier)
 	downstream *= billingGroup.PeakMultiplierAt(pricingAt)
 	threshold := clampProfitControlThreshold(downstream * (1 - group.ProfitMinMargin - group.ProfitSafetyBuffer))
 

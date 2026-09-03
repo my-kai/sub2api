@@ -235,6 +235,11 @@ func IPAddress(v string) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldIPAddress, v))
 }
 
+// EgressHost applies equality check predicate on the "egress_host" field. It's identical to EgressHostEQ.
+func EgressHost(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldEgressHost, v))
+}
+
 // ImageCount applies equality check predicate on the "image_count" field. It's identical to ImageCountEQ.
 func ImageCount(v int) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldImageCount, v))
@@ -1933,6 +1938,81 @@ func IPAddressEqualFold(v string) predicate.UsageLog {
 // IPAddressContainsFold applies the ContainsFold predicate on the "ip_address" field.
 func IPAddressContainsFold(v string) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldContainsFold(FieldIPAddress, v))
+}
+
+// EgressHostEQ applies the EQ predicate on the "egress_host" field.
+func EgressHostEQ(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldEgressHost, v))
+}
+
+// EgressHostNEQ applies the NEQ predicate on the "egress_host" field.
+func EgressHostNEQ(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldEgressHost, v))
+}
+
+// EgressHostIn applies the In predicate on the "egress_host" field.
+func EgressHostIn(vs ...string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldEgressHost, vs...))
+}
+
+// EgressHostNotIn applies the NotIn predicate on the "egress_host" field.
+func EgressHostNotIn(vs ...string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldEgressHost, vs...))
+}
+
+// EgressHostGT applies the GT predicate on the "egress_host" field.
+func EgressHostGT(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldEgressHost, v))
+}
+
+// EgressHostGTE applies the GTE predicate on the "egress_host" field.
+func EgressHostGTE(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldEgressHost, v))
+}
+
+// EgressHostLT applies the LT predicate on the "egress_host" field.
+func EgressHostLT(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldEgressHost, v))
+}
+
+// EgressHostLTE applies the LTE predicate on the "egress_host" field.
+func EgressHostLTE(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldEgressHost, v))
+}
+
+// EgressHostContains applies the Contains predicate on the "egress_host" field.
+func EgressHostContains(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldContains(FieldEgressHost, v))
+}
+
+// EgressHostHasPrefix applies the HasPrefix predicate on the "egress_host" field.
+func EgressHostHasPrefix(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldHasPrefix(FieldEgressHost, v))
+}
+
+// EgressHostHasSuffix applies the HasSuffix predicate on the "egress_host" field.
+func EgressHostHasSuffix(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldHasSuffix(FieldEgressHost, v))
+}
+
+// EgressHostIsNil applies the IsNil predicate on the "egress_host" field.
+func EgressHostIsNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIsNull(FieldEgressHost))
+}
+
+// EgressHostNotNil applies the NotNil predicate on the "egress_host" field.
+func EgressHostNotNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotNull(FieldEgressHost))
+}
+
+// EgressHostEqualFold applies the EqualFold predicate on the "egress_host" field.
+func EgressHostEqualFold(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEqualFold(FieldEgressHost, v))
+}
+
+// EgressHostContainsFold applies the ContainsFold predicate on the "egress_host" field.
+func EgressHostContainsFold(v string) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldContainsFold(FieldEgressHost, v))
 }
 
 // ImageCountEQ applies the EQ predicate on the "image_count" field.

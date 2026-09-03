@@ -42,6 +42,9 @@
         >
           {{ peakRateText }}
         </span>
+        <div v-if="modelRateMultipliers.length" class="max-w-64 whitespace-normal text-right text-[11px] leading-tight text-gray-500 dark:text-gray-400">
+          <span v-for="item in modelRateMultipliers" :key="item.model" class="mr-2 inline-block">{{ item.model }}: {{ item.rate_multiplier }}x</span>
+        </div>
       </div>
       <!-- Checkmark -->
       <svg
@@ -81,6 +84,7 @@ interface Props {
   description?: string | null
   selected?: boolean
   showCheckmark?: boolean
+  modelRateMultipliers?: Array<{ model: string; rate_multiplier: number }>
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -88,7 +92,8 @@ const props = withDefaults(defineProps<Props>(), {
   selected: false,
   showCheckmark: true,
   userRateMultiplier: null,
-  peakRateEnabled: false
+  peakRateEnabled: false,
+  modelRateMultipliers: () => []
 })
 
 // Whether user has a custom rate different from default

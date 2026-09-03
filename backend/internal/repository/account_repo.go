@@ -15,6 +15,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +26,7 @@ import (
 	dbgroup "github.com/Wei-Shaw/sub2api/ent/group"
 	dbpredicate "github.com/Wei-Shaw/sub2api/ent/predicate"
 	dbproxy "github.com/Wei-Shaw/sub2api/ent/proxy"
+	customegress "github.com/Wei-Shaw/sub2api/internal/custom/egress"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -306,6 +308,7 @@ func (r *accountRepository) GetByIDs(ctx context.Context, ids []int64) ([]*servi
 	}
 
 	accountIDs := make([]int64, 0, len(entAccounts))
+	proxyIDs := make([]int64, 0)
 	entByID := make(map[int64]*dbent.Account, len(entAccounts))
 	for _, acc := range entAccounts {
 		entByID[acc.ID] = acc
@@ -328,6 +331,18 @@ func (r *accountRepository) GetByIDs(ctx context.Context, ids []int64) ([]*servi
 		if entAcc.Edges.Proxy != nil {
 			out.Proxy = proxyEntityToService(entAcc.Edges.Proxy)
 		}
+		if ids, includeLocal, configured, err := customegress.ConfigFromExtra(out.Extra); err != nil {
+			return nil, err
+		} else if configured {
+			proxyIDs = append(proxyIDs, ids...)
+			out.EgressProxyIDs = append([]int64(nil), ids...)
+			out.EgressIncludeLocal = includeLocal
+		} else {
+			out.EgressIncludeLocal = out.Proxy == nil
+			if out.Proxy != nil {
+				out.EgressProxies = []*service.Proxy{out.Proxy}
+			}
+		}
 
 		if groups, ok := groupsByAccount[entAcc.ID]; ok {
 			out.Groups = groups
@@ -339,6 +354,21 @@ func (r *accountRepository) GetByIDs(ctx context.Context, ids []int64) ([]*servi
 			out.AccountGroups = ags
 		}
 		outByID[entAcc.ID] = out
+	}
+	if len(proxyIDs) > 0 {
+		proxyMap, err := r.loadProxies(ctx, proxyIDs)
+		if err != nil {
+			return nil, err
+		}
+		for _, acc := range outByID {
+			for _, id := range acc.EgressProxyIDs {
+				proxy, ok := proxyMap[id]
+				if !ok || proxy == nil {
+					return nil, fmt.Errorf("account %d egress proxy %d not found", acc.ID, id)
+				}
+				acc.EgressProxies = append(acc.EgressProxies, proxy)
+			}
+		}
 	}
 
 	// Preserve input order (first occurrence), and ignore missing IDs.
@@ -3131,6 +3161,11 @@ func (r *accountRepository) accountsToService(ctx context.Context, accounts []*d
 		if acc.ProxyFallbackOriginID != nil {
 			proxyIDs = append(proxyIDs, *acc.ProxyFallbackOriginID)
 		}
+		if ids, _, configured, err := customegress.ConfigFromExtra(acc.Extra); err != nil {
+			return nil, err
+		} else if configured {
+			proxyIDs = append(proxyIDs, ids...)
+		}
 	}
 
 	proxyMap, err := r.loadProxies(ctx, proxyIDs)
@@ -3151,6 +3186,24 @@ func (r *accountRepository) accountsToService(ctx context.Context, accounts []*d
 		if acc.ProxyID != nil {
 			if proxy, ok := proxyMap[*acc.ProxyID]; ok {
 				out.Proxy = proxy
+			}
+		}
+		if ids, includeLocal, configured, err := customegress.ConfigFromExtra(acc.Extra); err != nil {
+			return nil, err
+		} else if configured {
+			out.EgressProxyIDs = append([]int64(nil), ids...)
+			out.EgressIncludeLocal = includeLocal
+			for _, id := range ids {
+				proxy, ok := proxyMap[id]
+				if !ok || proxy == nil {
+					return nil, fmt.Errorf("account %d egress proxy %d not found", out.ID, id)
+				}
+				out.EgressProxies = append(out.EgressProxies, proxy)
+			}
+		} else {
+			out.EgressIncludeLocal = out.Proxy == nil
+			if out.Proxy != nil {
+				out.EgressProxies = []*service.Proxy{out.Proxy}
 			}
 		}
 		out.ProxyFallbackOriginID = acc.ProxyFallbackOriginID

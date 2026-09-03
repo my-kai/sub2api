@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	modelratemultiplier "github.com/Wei-Shaw/sub2api/internal/custom/modelratemultiplier/service"
+	modelratetypes "github.com/Wei-Shaw/sub2api/internal/custom/modelratemultiplier/types"
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
@@ -24,6 +26,7 @@ type GroupHandler struct {
 	adminService         service.AdminService
 	dashboardService     *service.DashboardService
 	groupCapacityService *service.GroupCapacityService
+	modelRateService     *modelratemultiplier.Service
 }
 
 // GetLiveCapability 返回当前服务端是否具备生成 Live attestation 的运行环境。
@@ -86,12 +89,78 @@ func (f optionalLimitField) ToServiceInput() *float64 {
 }
 
 // NewGroupHandler creates a new admin group handler
-func NewGroupHandler(adminService service.AdminService, dashboardService *service.DashboardService, groupCapacityService *service.GroupCapacityService) *GroupHandler {
-	return &GroupHandler{
+func NewGroupHandler(adminService service.AdminService, dashboardService *service.DashboardService, groupCapacityService *service.GroupCapacityService, modelRateServices ...*modelratemultiplier.Service) *GroupHandler {
+	h := &GroupHandler{
 		adminService:         adminService,
 		dashboardService:     dashboardService,
 		groupCapacityService: groupCapacityService,
 	}
+	if len(modelRateServices) > 0 {
+		h.modelRateService = modelRateServices[0]
+	}
+	return h
+}
+
+// GetModelRateMultipliers lists exact model overrides for one group.
+func (h *GroupHandler) GetModelRateMultipliers(c *gin.Context) {
+	if h.modelRateService == nil {
+		response.Error(c, 503, "model rate multiplier service is unavailable")
+		return
+	}
+	groupID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || groupID <= 0 {
+		response.BadRequest(c, "Invalid group ID")
+		return
+	}
+	entries, err := h.modelRateService.List(c.Request.Context(), groupID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, entries)
+}
+
+// BatchSetModelRateMultipliers replaces all exact model overrides for a group.
+func (h *GroupHandler) BatchSetModelRateMultipliers(c *gin.Context) {
+	if h.modelRateService == nil {
+		response.Error(c, 503, "model rate multiplier service is unavailable")
+		return
+	}
+	groupID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || groupID <= 0 {
+		response.BadRequest(c, "Invalid group ID")
+		return
+	}
+	var req struct {
+		Entries []modelratetypes.Input `json:"entries"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	if err := h.modelRateService.Replace(c.Request.Context(), groupID, req.Entries); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"message": "Model rate multipliers updated successfully"})
+}
+
+// ClearModelRateMultipliers removes all exact model overrides for a group.
+func (h *GroupHandler) ClearModelRateMultipliers(c *gin.Context) {
+	if h.modelRateService == nil {
+		response.Error(c, 503, "model rate multiplier service is unavailable")
+		return
+	}
+	groupID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || groupID <= 0 {
+		response.BadRequest(c, "Invalid group ID")
+		return
+	}
+	if err := h.modelRateService.Clear(c.Request.Context(), groupID); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"message": "Model rate multipliers cleared successfully"})
 }
 
 // CreateGroupRequest represents create group request
@@ -601,6 +670,19 @@ func (h *GroupHandler) Duplicate(c *gin.Context) {
 			if execErr != nil {
 				return nil, execErr
 			}
+			if h.modelRateService != nil && group != nil {
+				sourceEntries, listErr := h.modelRateService.List(ctx, groupID)
+				if listErr != nil {
+					return nil, listErr
+				}
+				inputs := make([]modelratetypes.Input, 0, len(sourceEntries))
+				for _, entry := range sourceEntries {
+					inputs = append(inputs, modelratetypes.Input{Model: entry.Model, RateMultiplier: entry.RateMultiplier})
+				}
+				if replaceErr := h.modelRateService.Replace(ctx, group.ID, inputs); replaceErr != nil {
+					return nil, replaceErr
+				}
+			}
 			return dto.GroupFromServiceAdmin(group), nil
 		},
 	)
@@ -724,6 +806,12 @@ func (h *GroupHandler) Delete(c *gin.Context) {
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
+	}
+	if h.modelRateService != nil {
+		if err := h.modelRateService.Clear(c.Request.Context(), groupID); err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
 	}
 
 	response.Success(c, gin.H{"message": "Group deleted successfully"})

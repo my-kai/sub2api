@@ -500,6 +500,7 @@
                 :peak-start="(option as unknown as GroupOption).peakStart"
                 :peak-end="(option as unknown as GroupOption).peakEnd"
                 :peak-rate-multiplier="(option as unknown as GroupOption).peakRateMultiplier"
+                :model-rate-multipliers="(option as unknown as GroupOption).modelRateMultipliers"
                 :description="(option as unknown as GroupOption).description"
                 :selected="selected"
               />
@@ -1169,6 +1170,7 @@ interface GroupOption {
   peakRateMultiplier: number
   subscriptionType: SubscriptionType
   platform: GroupPlatform
+  modelRateMultipliers: Array<{ model: string; rate_multiplier: number }>
 }
 
 const appStore = useAppStore()
@@ -1420,7 +1422,8 @@ const groupOptions = computed(() =>
     peakEnd: group.peak_end,
     peakRateMultiplier: group.peak_rate_multiplier,
     subscriptionType: group.subscription_type,
-    platform: group.platform
+    platform: group.platform,
+    modelRateMultipliers: group.model_rate_multipliers || []
   }))
 )
 

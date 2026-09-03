@@ -14,12 +14,38 @@ import (
 	"strings"
 	"time"
 
+	customegress "github.com/Wei-Shaw/sub2api/internal/custom/egress"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 )
 
 // Account management implementations
+// validateEgressExtra checks configured proxy references before persisting account settings.
+func (s *adminServiceImpl) validateEgressExtra(ctx context.Context, extra map[string]any) error {
+	ids, includeLocal, configured, err := customegress.ConfigFromExtra(extra)
+	if err != nil || !configured {
+		return err
+	}
+	if len(ids) == 0 && !includeLocal {
+		return fmt.Errorf("egress_proxy_ids must contain at least one proxy when configured")
+	}
+	proxies, err := s.proxyRepo.ListByIDs(ctx, ids)
+	if err != nil {
+		return fmt.Errorf("validate egress proxies: %w", err)
+	}
+	if len(proxies) != len(ids) {
+		return fmt.Errorf("one or more configured egress proxies do not exist")
+	}
+	now := time.Now()
+	for _, proxy := range proxies {
+		if !proxy.IsActive() || proxy.IsExpired(now) {
+			return fmt.Errorf("egress proxy %d is inactive or expired", proxy.ID)
+		}
+	}
+	return nil
+}
+
 func (s *adminServiceImpl) ListAccounts(ctx context.Context, page, pageSize int, platform, accountType, status, search string, groupID int64, privacyMode string, sortBy, sortOrder string) ([]Account, int64, error) {
 	params := pagination.PaginationParams{Page: page, PageSize: pageSize, SortBy: sortBy, SortOrder: sortOrder}
 	accounts, result, err := s.accountRepo.ListWithFilters(ctx, params, platform, accountType, status, search, groupID, privacyMode)
@@ -474,6 +500,9 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 	if err != nil {
 		return nil, err
 	}
+	if err := s.validateEgressExtra(ctx, accountExtra); err != nil {
+		return nil, err
+	}
 
 	// 绑定分组
 	groupIDs := input.GroupIDs
@@ -569,6 +598,9 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		}
 		normalizedExtra, err = normalizeOpenAIAutoResetCreditExtra(account.Platform, effectiveType, account.IsShadow(), normalizedExtra)
 		if err != nil {
+			return nil, err
+		}
+		if err := s.validateEgressExtra(ctx, normalizedExtra); err != nil {
 			return nil, err
 		}
 	}
