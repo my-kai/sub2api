@@ -570,7 +570,12 @@ func shouldClearStickySession(account *Account, requestedModel string) bool {
 }
 
 type AccountWaitPlan struct {
-	AccountID      int64
+	AccountID int64
+	// EgressKey/EgressHost bind a wait to the exit selected before slot acquire.
+	// Empty EgressKey preserves the legacy account-level slot path for accounts
+	// that have not opted into the multi-exit configuration.
+	EgressKey      string
+	EgressHost     string
 	MaxConcurrency int
 	Timeout        time.Duration
 	MaxWaiting     int
@@ -611,8 +616,11 @@ type AudioUsage struct {
 
 type ForwardResult struct {
 	RequestID string
-	Usage     ClaudeUsage
-	Model     string
+	// EgressHost records the exit selected for this request so asynchronous billing
+	// can persist the actual route instead of re-reading the unselected account.
+	EgressHost string
+	Usage      ClaudeUsage
+	Model      string
 	// UpstreamModel is the actual upstream model after mapping.
 	// Prefer empty when it is identical to Model; persistence normalizes equal values away as no-op mappings.
 	UpstreamModel string

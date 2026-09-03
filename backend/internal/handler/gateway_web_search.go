@@ -310,6 +310,7 @@ func (h *GatewayHandler) acquireWebSearchAccountSlot(
 		selected.WaitPlan.Timeout,
 		false,
 		&streamStarted,
+		selected.WaitPlan.EgressKey,
 	)
 	releaseWait()
 	if err != nil {

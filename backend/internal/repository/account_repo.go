@@ -3263,6 +3263,12 @@ func (r *accountRepository) loadProxies(ctx context.Context, proxyIDs []int64) (
 			return nil, err
 		}
 		for _, p := range proxies {
+			if p == nil {
+				return nil, fmt.Errorf("egress proxy is nil")
+			}
+			if p.DeletedAt != nil || p.Status != service.StatusActive {
+				return nil, fmt.Errorf("egress proxy %d is not active", p.ID)
+			}
 			proxyMap[p.ID] = proxyEntityToService(p)
 		}
 	}

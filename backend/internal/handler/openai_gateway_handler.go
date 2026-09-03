@@ -2118,6 +2118,7 @@ func (h *OpenAIGatewayHandler) acquireOpenAIAccountSlot(
 		selection.WaitPlan.Timeout,
 		reqStream,
 		streamStarted,
+		selection.WaitPlan.EgressKey,
 	)
 	if err != nil {
 		reqLog.Warn("openai.account_slot_acquire_failed", zap.Int64("account_id", account.ID), zap.Error(err))

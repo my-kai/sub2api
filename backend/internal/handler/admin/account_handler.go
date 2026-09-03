@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	customegress "github.com/Wei-Shaw/sub2api/internal/custom/egress"
 	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
@@ -241,6 +242,7 @@ func (h *AccountHandler) buildAccountResponseWithRuntime(ctx context.Context, ac
 			item.CurrentConcurrency = counts[account.ID]
 		}
 	}
+	h.enrichEgressConcurrency(ctx, &item, account)
 
 	if account.IsAnthropicOAuthOrSetupToken() {
 		if h.accountUsageService != nil && account.GetWindowCostLimit() > 0 {
@@ -660,6 +662,7 @@ func (h *AccountHandler) List(c *gin.Context) {
 			SchedulerScore:     schedulerScores[acc.ID],
 			SchedulerScores:    schedulerGroupScores[acc.ID],
 		}
+		h.enrichEgressConcurrency(c.Request.Context(), &item, acc)
 
 		// 添加窗口费用（仅当启用时）
 		if windowCosts != nil {
@@ -698,6 +701,35 @@ func (h *AccountHandler) List(c *gin.Context) {
 	}
 
 	response.Paginated(c, result, total, page, pageSize)
+}
+
+// enrichEgressConcurrency overlays live occupancy for each configured exit.
+// The account-level count remains available for legacy consumers, while the
+// per-exit rows use isolated Redis identities and never copy that total.
+func (h *AccountHandler) enrichEgressConcurrency(ctx context.Context, item *AccountWithConcurrency, account *service.Account) {
+	if h == nil || item == nil || item.Account == nil || account == nil || h.concurrencyService == nil || !account.HasConfiguredEgress() {
+		return
+	}
+	for i := range item.Account.EgressCapacities {
+		row := &item.Account.EgressCapacities[i]
+		egressKey := ""
+		if row.Host == customegress.LocalHost {
+			egressKey = "local"
+		} else {
+			for _, proxy := range account.EgressProxies {
+				if proxy != nil && proxy.Host == row.Host {
+					egressKey = fmt.Sprintf("proxy:%d", proxy.ID)
+					break
+				}
+			}
+		}
+		if egressKey == "" {
+			continue
+		}
+		if current, err := h.concurrencyService.GetAccountEgressConcurrency(ctx, account.ID, egressKey); err == nil {
+			row.CurrentConcurrency = current
+		}
+	}
 }
 
 func buildAccountsListETag(

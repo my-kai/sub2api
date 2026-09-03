@@ -354,13 +354,16 @@ func (h *ConcurrencyHelper) waitForSlotWithPing(c *gin.Context, slotType string,
 }
 
 // waitForSlotWithPingTimeout waits for a concurrency slot with a custom timeout.
-func (h *ConcurrencyHelper) waitForSlotWithPingTimeout(c *gin.Context, slotType string, id int64, maxConcurrency int, timeout time.Duration, isStream bool, streamStarted *bool, tryImmediate bool) (func(), error) {
+func (h *ConcurrencyHelper) waitForSlotWithPingTimeout(c *gin.Context, slotType string, id int64, maxConcurrency int, timeout time.Duration, isStream bool, streamStarted *bool, tryImmediate bool, egressKeys ...string) (func(), error) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), timeout)
 	defer cancel()
 
 	acquireSlot := func() (*service.AcquireResult, error) {
 		if slotType == "user" {
 			return h.concurrencyService.AcquireUserSlot(ctx, id, maxConcurrency)
+		}
+		if len(egressKeys) > 0 && egressKeys[0] != "" {
+			return h.concurrencyService.AcquireAccountEgressSlot(ctx, id, egressKeys[0], maxConcurrency)
 		}
 		return h.concurrencyService.AcquireAccountSlot(ctx, id, maxConcurrency)
 	}
@@ -443,8 +446,17 @@ func (h *ConcurrencyHelper) waitForSlotWithPingTimeout(c *gin.Context, slotType 
 }
 
 // AcquireAccountSlotWithWaitTimeout acquires an account slot with a custom timeout (keeps SSE ping).
-func (h *ConcurrencyHelper) AcquireAccountSlotWithWaitTimeout(c *gin.Context, accountID int64, maxConcurrency int, timeout time.Duration, isStream bool, streamStarted *bool) (func(), error) {
-	return h.waitForSlotWithPingTimeout(c, "account", accountID, maxConcurrency, timeout, isStream, streamStarted, true)
+func (h *ConcurrencyHelper) AcquireAccountSlotWithWaitTimeout(c *gin.Context, accountID int64, maxConcurrency int, timeout time.Duration, isStream bool, streamStarted *bool, egressKeys ...string) (func(), error) {
+	return h.waitForSlotWithPingTimeout(c, "account", accountID, maxConcurrency, timeout, isStream, streamStarted, true, egressKeys...)
+}
+
+// AcquireAccountEgressSlotWithWaitTimeout waits on one request-bound exit,
+// preserving the same SSE ping and cancellation behavior as account slots.
+func (h *ConcurrencyHelper) AcquireAccountEgressSlotWithWaitTimeout(c *gin.Context, accountID int64, egressKey string, maxConcurrency int, timeout time.Duration, isStream bool, streamStarted *bool) (func(), error) {
+	if egressKey == "" {
+		return nil, fmt.Errorf("account egress identity is required")
+	}
+	return h.waitForSlotWithPingTimeout(c, "account", accountID, maxConcurrency, timeout, isStream, streamStarted, true, egressKey)
 }
 
 // nextBackoff 计算下一次退避时间

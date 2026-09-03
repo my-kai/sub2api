@@ -71,9 +71,12 @@ type Account struct {
 	EgressProxies      []*Proxy
 	// SelectedEgressHost is set only on a request-scoped account clone.
 	SelectedEgressHost string
-	AccountGroups      []AccountGroup
-	GroupIDs           []int64
-	Groups             []*Group
+	// SelectedEgressKey is the stable slot identity for the request-scoped exit.
+	// It is "local" for direct traffic and "proxy:<id>" for configured proxies.
+	SelectedEgressKey string
+	AccountGroups     []AccountGroup
+	GroupIDs          []int64
+	Groups            []*Group
 
 	// model_mapping 热路径缓存（非持久化字段）
 	modelMappingCache               map[string]string
@@ -107,11 +110,20 @@ func (a *Account) SelectEgressForRequest() *Account {
 	clone.SelectedEgressHost = host
 	if proxy == nil {
 		clone.ProxyID = nil
+		clone.SelectedEgressKey = "local"
 	} else {
 		id := proxy.ID
 		clone.ProxyID = &id
+		clone.SelectedEgressKey = "proxy:" + strconv.FormatInt(id, 10)
 	}
 	return &clone
+}
+
+// HasConfiguredEgress reports whether the account has the normalized exit pool
+// needed for exit-scoped concurrency. Legacy test fixtures that omit the pool
+// continue using the account-level compatibility path.
+func (a *Account) HasConfiguredEgress() bool {
+	return a != nil && (a.EgressIncludeLocal || len(a.EgressProxyIDs) > 0 || len(a.EgressProxies) > 0)
 }
 
 // NextEgressProxy returns the next configured proxy and its audit host.

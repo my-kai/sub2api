@@ -26,13 +26,16 @@ const (
 	// 并发槽位键前缀（有序集合）
 	// 格式: concurrency:account:{accountID}
 	accountSlotKeyPrefix = "concurrency:account:"
+	// 出口级账号槽位格式: concurrency:account:{accountID}:egress:{egressKey}
+	accountEgressSlotKeyPrefix = "concurrency:account:"
 	// 格式: concurrency:user:{userID}
 	userSlotKeyPrefix = "concurrency:user:"
 	// 格式: concurrency:api_key:{apiKeyID}
-	apiKeySlotKeyPrefix      = "concurrency:api_key:"
-	liveAccountSlotKeyPrefix = "concurrency:live:account:"
-	liveUserSlotKeyPrefix    = "concurrency:live:user:"
-	liveAPIKeySlotKeyPrefix  = "concurrency:live:api_key:"
+	apiKeySlotKeyPrefix            = "concurrency:api_key:"
+	liveAccountSlotKeyPrefix       = "concurrency:live:account:"
+	liveAccountEgressSlotKeyPrefix = "concurrency:live:account:"
+	liveUserSlotKeyPrefix          = "concurrency:live:user:"
+	liveAPIKeySlotKeyPrefix        = "concurrency:live:api_key:"
 	// API-key-scoped client WebSocket ingress leases use a shorter TTL than
 	// ordinary request slots, because idle ingress sessions do not hold a turn slot.
 	openAIWSIngressLeaseKeyPrefix  = "concurrency:openai_ws_ingress:api_key:"
@@ -382,6 +385,10 @@ func accountSlotKey(accountID int64) string {
 	return fmt.Sprintf("%s%d", accountSlotKeyPrefix, accountID)
 }
 
+func accountEgressSlotKey(accountID int64, egressKey string) string {
+	return fmt.Sprintf("%s%delegress:%s", accountEgressSlotKeyPrefix, accountID, egressKey)
+}
+
 func userSlotKey(userID int64) string {
 	return fmt.Sprintf("%s%d", userSlotKeyPrefix, userID)
 }
@@ -392,6 +399,10 @@ func apiKeySlotKey(apiKeyID int64) string {
 
 func liveAccountSlotKey(accountID int64) string {
 	return fmt.Sprintf("%s%d", liveAccountSlotKeyPrefix, accountID)
+}
+
+func liveAccountEgressSlotKey(accountID int64, egressKey string) string {
+	return fmt.Sprintf("%s%delegress:%s", liveAccountEgressSlotKeyPrefix, accountID, egressKey)
 }
 
 func liveUserSlotKey(userID int64) string {
@@ -640,6 +651,43 @@ func (c *concurrencyCache) AcquireAccountSlot(ctx context.Context, accountID int
 		c.touchActiveIndexAt(ctx, accountActiveIndexKey, accountID, now+int64(c.slotTTLSeconds))
 	}
 	return result == 1, nil
+}
+
+// AcquireAccountEgressSlot stores a request in the exit-specific sorted set.
+// The Lua script keeps ordinary and live members for the same exit under one
+// limit while leaving other exits independent.
+func (c *concurrencyCache) AcquireAccountEgressSlot(ctx context.Context, accountID int64, egressKey string, maxConcurrency int, requestID string) (bool, error) {
+	if accountID <= 0 || egressKey == "" {
+		return false, errors.New("account egress identity is required")
+	}
+	key := accountEgressSlotKey(accountID, egressKey)
+	result, now, err := runScriptInt64Pair(ctx, c.rdb, acquireScript, []string{key, liveAccountEgressSlotKey(accountID, egressKey)}, maxConcurrency, c.slotTTLSeconds, requestID)
+	if err != nil {
+		return false, err
+	}
+	if result == 1 {
+		c.touchActiveIndexAt(ctx, accountActiveIndexKey, accountID, now+int64(c.slotTTLSeconds))
+	}
+	return result == 1, nil
+}
+
+// ReleaseAccountEgressSlot removes a request from the same exit set used by acquire.
+func (c *concurrencyCache) ReleaseAccountEgressSlot(ctx context.Context, accountID int64, egressKey string, requestID string) error {
+	if accountID <= 0 || egressKey == "" || requestID == "" {
+		return errors.New("account egress identity and request id are required")
+	}
+	return c.rdb.ZRem(ctx, accountEgressSlotKey(accountID, egressKey), requestID).Err()
+}
+
+// GetAccountEgressConcurrency returns the current occupancy of one exit.
+func (c *concurrencyCache) GetAccountEgressConcurrency(ctx context.Context, accountID int64, egressKey string) (int, error) {
+	if accountID <= 0 || egressKey == "" {
+		return 0, errors.New("account egress identity is required")
+	}
+	return getCountScript.Run(ctx, c.rdb, []string{
+		accountEgressSlotKey(accountID, egressKey),
+		liveAccountEgressSlotKey(accountID, egressKey),
+	}, c.slotTTLSeconds).Int()
 }
 
 func (c *concurrencyCache) ReleaseAccountSlot(ctx context.Context, accountID int64, requestID string) error {

@@ -1185,11 +1185,15 @@ func (s *GatewayService) buildRecordUsageLog(
 			"selected_response_model", strings.TrimSpace(result.UpstreamResponseModel),
 		)
 	}
+	egressHost := strings.TrimSpace(result.EgressHost)
+	if egressHost == "" && account != nil {
+		egressHost = strings.TrimSpace(account.SelectedEgressHost)
+	}
 	usageLog := &UsageLog{
 		UserID:                   user.ID,
 		APIKeyID:                 apiKey.ID,
 		AccountID:                account.ID,
-		EgressHost:               optionalTrimmedStringPtr(account.SelectedEgressHost),
+		EgressHost:               optionalTrimmedStringPtr(egressHost),
 		RequestID:                requestID,
 		Model:                    result.Model,
 		RequestedModel:           requestedModel,

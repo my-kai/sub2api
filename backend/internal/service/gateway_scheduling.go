@@ -174,7 +174,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 				return nil, err
 			}
 
-			result, err := s.tryAcquireAccountSlot(ctx, account.ID, account.Concurrency)
+			account, result, err := s.prepareAccountSlot(ctx, account)
 			if err == nil && result.Acquired {
 				// 获取槽位后检查会话限制（使用 sessionHash 作为会话标识符）
 				if !s.checkAndRegisterSession(ctx, account, sessionHash) {
@@ -196,6 +196,8 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 				if waitingCount < cfg.StickySessionMaxWaiting {
 					return s.newSelectionResult(ctx, account, false, nil, &AccountWaitPlan{
 						AccountID:      account.ID,
+						EgressKey:      account.SelectedEgressKey,
+						EgressHost:     account.SelectedEgressHost,
 						MaxConcurrency: account.Concurrency,
 						Timeout:        cfg.StickySessionWaitTimeout,
 						MaxWaiting:     cfg.StickySessionMaxWaiting,
@@ -204,6 +206,8 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			}
 			return s.newSelectionResult(ctx, account, false, nil, &AccountWaitPlan{
 				AccountID:      account.ID,
+				EgressKey:      account.SelectedEgressKey,
+				EgressHost:     account.SelectedEgressHost,
 				MaxConcurrency: account.Concurrency,
 				Timeout:        cfg.FallbackWaitTimeout,
 				MaxWaiting:     cfg.FallbackMaxWaiting,
@@ -354,7 +358,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 						rpmPass := gatePass && s.isAccountSchedulableForRPM(ctx, stickyAccount, true)
 
 						if rpmPass { // 粘性会话窗口费用+RPM 检查
-							result, err := s.tryAcquireAccountSlot(ctx, stickyAccountID, stickyAccount.Concurrency)
+							stickyAccount, result, err := s.prepareAccountSlot(ctx, stickyAccount)
 							if err == nil && result.Acquired {
 								// 会话数量限制检查
 								if !s.checkAndRegisterSession(ctx, stickyAccount, sessionHash) {
@@ -387,6 +391,8 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 										// 直接返回会导致后续转发缺少凭证而鉴权失败。
 										return s.newSelectionResult(ctx, stickyAccount, false, nil, &AccountWaitPlan{
 											AccountID:      stickyAccountID,
+											EgressKey:      stickyAccount.SelectedEgressKey,
+											EgressHost:     stickyAccount.SelectedEgressHost,
 											MaxConcurrency: stickyAccount.Concurrency,
 											Timeout:        cfg.StickySessionWaitTimeout,
 											MaxWaiting:     cfg.StickySessionMaxWaiting,
@@ -468,7 +474,8 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 
 				// 4. 尝试获取槽位
 				for _, item := range routingAvailable {
-					result, err := s.tryAcquireAccountSlot(ctx, item.account.ID, item.account.Concurrency)
+					boundAccount, result, err := s.prepareAccountSlot(ctx, item.account)
+					item.account = boundAccount
 					if err == nil && result.Acquired {
 						// 会话数量限制检查
 						if !s.checkAndRegisterSession(ctx, item.account, sessionHash) {
@@ -496,6 +503,8 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 					}
 					return s.newSelectionResult(ctx, item.account, false, nil, &AccountWaitPlan{
 						AccountID:      item.account.ID,
+						EgressKey:      item.account.SelectedEgressKey,
+						EgressHost:     item.account.SelectedEgressHost,
 						MaxConcurrency: item.account.Concurrency,
 						Timeout:        cfg.StickySessionWaitTimeout,
 						MaxWaiting:     cfg.StickySessionMaxWaiting,
@@ -552,7 +561,8 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 				)
 
 				if !clearSticky && platformOK && profitOK && modelSupported && modelSchedulable && quotaOK && windowCostOK && rpmOK && schedulable {
-					result, err := s.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
+					boundAccount, result, err := s.prepareAccountSlot(ctx, account)
+					account = boundAccount
 					if err == nil && result.Acquired {
 						// 会话数量限制检查
 						if !s.checkAndRegisterSession(ctx, account, sessionHash) {
@@ -593,6 +603,8 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 							)
 							return s.newSelectionResult(ctx, account, false, nil, &AccountWaitPlan{
 								AccountID:      accountID,
+								EgressKey:      account.SelectedEgressKey,
+								EgressHost:     account.SelectedEgressHost,
 								MaxConcurrency: account.Concurrency,
 								Timeout:        cfg.StickySessionWaitTimeout,
 								MaxWaiting:     cfg.StickySessionMaxWaiting,
@@ -724,7 +736,8 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 				break
 			}
 
-			result, err := s.tryAcquireAccountSlot(ctx, selected.account.ID, selected.account.Concurrency)
+			boundAccount, result, err := s.prepareAccountSlot(ctx, selected.account)
+			selected.account = boundAccount
 			if err == nil && result.Acquired {
 				// 会话数量限制检查
 				if !s.checkAndRegisterSession(ctx, selected.account, sessionHash) {
@@ -756,8 +769,14 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 		if !s.checkAndRegisterSession(ctx, acc, sessionHash) {
 			continue // 会话限制已满，尝试下一个账号
 		}
-		return s.newSelectionResult(ctx, acc, false, nil, &AccountWaitPlan{
+		bound := acc
+		if acc.HasConfiguredEgress() {
+			bound = acc.SelectEgressForRequest()
+		}
+		return s.newSelectionResult(ctx, bound, false, nil, &AccountWaitPlan{
 			AccountID:      acc.ID,
+			EgressKey:      bound.SelectedEgressKey,
+			EgressHost:     bound.SelectedEgressHost,
 			MaxConcurrency: acc.Concurrency,
 			Timeout:        cfg.FallbackWaitTimeout,
 			MaxWaiting:     cfg.FallbackMaxWaiting,
@@ -771,7 +790,7 @@ func (s *GatewayService) tryAcquireByLegacyOrder(ctx context.Context, candidates
 	sortAccountsByPriorityAndLastUsed(ordered, preferOAuth)
 
 	for _, acc := range ordered {
-		result, err := s.tryAcquireAccountSlot(ctx, acc.ID, acc.Concurrency)
+		acc, result, err := s.prepareAccountSlot(ctx, acc)
 		if err == nil && result.Acquired {
 			// 会话数量限制检查
 			if !s.checkAndRegisterSession(ctx, acc, sessionHash) {
@@ -1129,6 +1148,35 @@ func (s *GatewayService) tryAcquireAccountSlot(ctx context.Context, accountID in
 		return &AcquireResult{Acquired: true, ReleaseFunc: func() {}}, nil
 	}
 	return s.concurrencyService.AcquireAccountSlot(ctx, accountID, maxConcurrency)
+}
+
+// tryAcquireAccountEgressSlot acquires the request-bound exit selected by the
+// scheduler. Keeping this beside the legacy helper makes the migration explicit
+// and leaves accounts without custom exits on the existing key path.
+func (s *GatewayService) tryAcquireAccountEgressSlot(ctx context.Context, account *Account) (*AcquireResult, error) {
+	if account == nil || account.SelectedEgressKey == "" {
+		return nil, fmt.Errorf("account egress selection is required")
+	}
+	if s.concurrencyService == nil {
+		return &AcquireResult{Acquired: true, ReleaseFunc: func() {}}, nil
+	}
+	return s.concurrencyService.AcquireAccountEgressSlot(ctx, account.ID, account.SelectedEgressKey, account.Concurrency)
+}
+
+// prepareAccountSlot binds one exit before acquiring its slot. The returned
+// account must be used for the selection result so forwarding observes exactly
+// the exit whose slot was reserved.
+func (s *GatewayService) prepareAccountSlot(ctx context.Context, account *Account) (*Account, *AcquireResult, error) {
+	if account == nil {
+		return nil, nil, fmt.Errorf("account is required")
+	}
+	if account != nil && account.HasConfiguredEgress() {
+		bound := account.SelectEgressForRequest()
+		result, err := s.tryAcquireAccountEgressSlot(ctx, bound)
+		return bound, result, err
+	}
+	result, err := s.tryAcquireAccountSlot(ctx, account.ID, account.Concurrency)
+	return account, result, err
 }
 
 type usageLogWindowStatsBatchProvider interface {
@@ -1497,9 +1545,19 @@ func (s *GatewayService) hydrateSelectedAccount(ctx context.Context, account *Ac
 }
 
 func (s *GatewayService) newSelectionResult(ctx context.Context, account *Account, acquired bool, release func(), waitPlan *AccountWaitPlan) (*AccountSelectionResult, error) {
+	selectedEgressKey := ""
+	selectedEgressHost := ""
+	if account != nil {
+		selectedEgressKey = account.SelectedEgressKey
+		selectedEgressHost = account.SelectedEgressHost
+	}
 	hydrated, err := s.hydrateSelectedAccount(ctx, account)
 	if err != nil {
 		return nil, err
+	}
+	if hydrated != nil {
+		hydrated.SelectedEgressKey = selectedEgressKey
+		hydrated.SelectedEgressHost = selectedEgressHost
 	}
 	return attachSelectionProfitGate(ctx, &AccountSelectionResult{
 		Account:     hydrated,

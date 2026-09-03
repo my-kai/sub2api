@@ -4,8 +4,8 @@
     <CapacityBadge
       v-for="row in concurrencyRows"
       :key="row.host"
-      :color-class="concurrencyClassFor(row.capacity)"
-      :current="currentConcurrency"
+      :color-class="concurrencyClassFor(row.current_concurrency ?? 0, row.capacity)"
+      :current="row.current_concurrency ?? 0"
       :max="row.capacity"
     >
       <svg class="h-2.5 w-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -59,10 +59,9 @@ const currentConcurrency = computed(() => props.account.current_concurrency || 0
 
 const concurrencyRows = computed(() => props.account.egress_capacities?.length
   ? props.account.egress_capacities
-  : [{ host: 'account', capacity: props.account.concurrency }])
+  : [{ host: 'account', capacity: props.account.concurrency, current_concurrency: currentConcurrency.value }])
 
-const concurrencyClassFor = (max: number) => {
-  const current = currentConcurrency.value
+const concurrencyClassFor = (current: number, max: number) => {
   if (current >= max) return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
   if (current > 0) return 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400'
   return 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'

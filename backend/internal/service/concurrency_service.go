@@ -55,6 +55,15 @@ type ConcurrencyCache interface {
 	CleanupStaleProcessSlots(ctx context.Context, activeRequestPrefix string) error
 }
 
+// EgressConcurrencyCache is implemented by caches that isolate account slots
+// by the request's configured exit. It is optional so legacy test doubles and
+// old deployments can continue serving accounts that have no multi-exit setup.
+type EgressConcurrencyCache interface {
+	AcquireAccountEgressSlot(ctx context.Context, accountID int64, egressKey string, maxConcurrency int, requestID string) (bool, error)
+	ReleaseAccountEgressSlot(ctx context.Context, accountID int64, egressKey string, requestID string) error
+	GetAccountEgressConcurrency(ctx context.Context, accountID int64, egressKey string) (int, error)
+}
+
 type APIKeyConcurrencyCache interface {
 	TrackAPIKeySlot(ctx context.Context, apiKeyID int64, requestID string) error
 	ReleaseAPIKeySlot(ctx context.Context, apiKeyID int64, requestID string) error
@@ -373,6 +382,49 @@ func (s *ConcurrencyService) AcquireAccountSlot(ctx context.Context, accountID i
 		Acquired:    false,
 		ReleaseFunc: nil,
 	}, nil
+}
+
+// AcquireAccountEgressSlot acquires a slot for one configured account exit.
+// The caller must pass the request-scoped stable egress key selected before
+// dispatch; release uses the same key so concurrent exits cannot cross-count.
+func (s *ConcurrencyService) AcquireAccountEgressSlot(ctx context.Context, accountID int64, egressKey string, maxConcurrency int) (*AcquireResult, error) {
+	if maxConcurrency <= 0 {
+		return &AcquireResult{Acquired: true, ReleaseFunc: func() {}}, nil
+	}
+	cache, ok := s.cache.(EgressConcurrencyCache)
+	if !ok {
+		return nil, errors.New("egress concurrency cache is unavailable")
+	}
+	if accountID <= 0 || egressKey == "" {
+		return nil, errors.New("account egress identity is required")
+	}
+	requestID := generateRequestID()
+	acquired, err := cache.AcquireAccountEgressSlot(ctx, accountID, egressKey, maxConcurrency, requestID)
+	if err != nil {
+		return nil, err
+	}
+	if !acquired {
+		return &AcquireResult{Acquired: false}, nil
+	}
+	return &AcquireResult{
+		Acquired: true,
+		ReleaseFunc: func() {
+			bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := cache.ReleaseAccountEgressSlot(bgCtx, accountID, egressKey, requestID); err != nil {
+				logger.LegacyPrintf("service.concurrency", "Warning: failed to release egress slot for %d (egress=%s req=%s): %v", accountID, egressKey, requestID, err)
+			}
+		},
+	}, nil
+}
+
+// GetAccountEgressConcurrency returns the live occupancy for one exit.
+func (s *ConcurrencyService) GetAccountEgressConcurrency(ctx context.Context, accountID int64, egressKey string) (int, error) {
+	cache, ok := s.cache.(EgressConcurrencyCache)
+	if !ok {
+		return 0, errors.New("egress concurrency cache is unavailable")
+	}
+	return cache.GetAccountEgressConcurrency(ctx, accountID, egressKey)
 }
 
 // AcquireUserSlot attempts to acquire a concurrency slot for a user.

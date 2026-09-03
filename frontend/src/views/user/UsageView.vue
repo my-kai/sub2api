@@ -707,7 +707,7 @@ const exportToCSV = async () => {
   }
 }
 
-const ALWAYS_VISIBLE = ['created_at']
+const ALWAYS_VISIBLE = ['created_at', 'egress_host']
 const DEFAULT_HIDDEN_COLUMNS = ['user_agent']
 const HIDDEN_COLUMNS_KEY = 'user-usage-hidden-columns'
 

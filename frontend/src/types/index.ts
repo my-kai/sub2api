@@ -1182,7 +1182,7 @@ export interface Account {
   proxy_id: number | null
   egress_proxy_ids?: number[]
   egress_include_local?: boolean
-  egress_capacities?: Array<{ host: string; capacity: number }>
+  egress_capacities?: Array<{ host: string; capacity: number; current_concurrency?: number }>
   proxy_fallback_origin_id?: number | null
   proxy_fallback_origin_name?: string | null
   concurrency: number

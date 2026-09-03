@@ -556,8 +556,13 @@ func (s *OpenAIGatewayService) ForwardImages(
 	body []byte,
 	parsed *OpenAIImagesRequest,
 	channelMappedModel string,
-) (*OpenAIForwardResult, error) {
+) (result *OpenAIForwardResult, err error) {
 	account = account.SelectEgressForRequest()
+	defer func() {
+		if result != nil && account != nil {
+			result.EgressHost = account.SelectedEgressHost
+		}
+	}()
 	if parsed == nil {
 		return nil, fmt.Errorf("parsed images request is required")
 	}

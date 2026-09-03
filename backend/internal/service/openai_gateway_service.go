@@ -232,7 +232,10 @@ type OpenAIUsage struct {
 
 // OpenAIForwardResult represents the result of forwarding
 type OpenAIForwardResult struct {
-	RequestID  string
+	RequestID string
+	// EgressHost records the exit selected for this request so asynchronous billing
+	// can persist the actual route instead of re-reading the unselected account.
+	EgressHost string
 	ResponseID string
 	Usage      OpenAIUsage
 	Model      string // 原始模型（用于响应和日志显示）

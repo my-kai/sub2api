@@ -13,7 +13,9 @@ const (
 	includeLocalKey = "egress_include_local"
 )
 
-// Capacity describes the share of an account's concurrency assigned to one exit.
+// Capacity describes one exit's concurrency ceiling. Every configured exit gets
+// the full account concurrency; total account capacity therefore scales with
+// the number of exits instead of being split between them.
 type Capacity struct {
 	Host     string `json:"host"`
 	Capacity int    `json:"capacity"`
@@ -66,7 +68,9 @@ func ConfigFromExtra(extra map[string]any) (ids []int64, includeLocal bool, conf
 	return out, includeLocal, configured, nil
 }
 
-// Capacities deterministically distributes total concurrency across exits.
+// Capacities assigns the full account concurrency to every configured exit.
+// Keeping this projection independent from live occupancy lets callers render
+// one stable row per exit while the concurrency service supplies current use.
 func Capacities(total int, hosts []string) []Capacity {
 	if len(hosts) == 0 {
 		return nil
@@ -74,14 +78,9 @@ func Capacities(total int, hosts []string) []Capacity {
 	if total < 0 {
 		total = 0
 	}
-	base, remainder := total/len(hosts), total%len(hosts)
 	out := make([]Capacity, len(hosts))
 	for i, host := range hosts {
-		extra := 0
-		if i < remainder {
-			extra = 1
-		}
-		out[i] = Capacity{Host: host, Capacity: base + extra}
+		out[i] = Capacity{Host: host, Capacity: total}
 	}
 	return out
 }

@@ -337,8 +337,9 @@ type Account struct {
 
 // EgressCapacity is one configured host's share of the account concurrency limit.
 type EgressCapacity struct {
-	Host     string `json:"host"`
-	Capacity int    `json:"capacity"`
+	Host               string `json:"host"`
+	Capacity           int    `json:"capacity"`
+	CurrentConcurrency int    `json:"current_concurrency"`
 }
 
 type AccountGroup struct {

@@ -593,6 +593,8 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 			Account: account,
 			WaitPlan: &AccountWaitPlan{
 				AccountID:      accountID,
+				EgressKey:      account.SelectedEgressKey,
+				EgressHost:     account.SelectedEgressHost,
 				MaxConcurrency: account.Concurrency,
 				Timeout:        cfg.StickySessionWaitTimeout,
 				MaxWaiting:     cfg.StickySessionMaxWaiting,
@@ -1180,7 +1182,11 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrderWithBudget
 			continue
 		}
 
-		result, attempted, acquireErr := s.tryAcquireOpenAIAccountSlot(ctx, candidate.account.ID, candidate.account.Concurrency, budget)
+		boundCandidate := candidate.account
+		if boundCandidate.HasConfiguredEgress() {
+			boundCandidate = boundCandidate.SelectEgressForRequest()
+		}
+		result, attempted, acquireErr := s.tryAcquireOpenAIAccountSlotForAccount(ctx, boundCandidate, budget)
 		if !attempted {
 			break
 		}
@@ -1210,10 +1216,17 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrderWithBudget
 			release(result)
 			continue
 		}
+		fresh.SelectedEgressKey = boundCandidate.SelectedEgressKey
+		fresh.SelectedEgressHost = boundCandidate.SelectedEgressHost
 
 		if fresh.Concurrency != candidate.account.Concurrency {
 			release(result)
-			result, attempted, acquireErr = s.tryAcquireOpenAIAccountSlot(ctx, fresh.ID, fresh.Concurrency, budget)
+			boundFresh := fresh
+			if boundFresh.HasConfiguredEgress() {
+				boundFresh = boundFresh.SelectEgressForRequest()
+			}
+			result, attempted, acquireErr = s.tryAcquireOpenAIAccountSlotForAccount(ctx, boundFresh, budget)
+			fresh = boundFresh
 			if !attempted {
 				continue
 			}
@@ -1246,6 +1259,25 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAIAccountSlot(
 		return nil, false, nil
 	}
 	result, err := s.service.tryAcquireAccountSlot(ctx, accountID, maxConcurrency)
+	return result, true, err
+}
+
+func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAIAccountSlotForAccount(
+	ctx context.Context,
+	account *Account,
+	budget *openAISelectionProbeBudget,
+) (*AcquireResult, bool, error) {
+	if account == nil {
+		return nil, false, nil
+	}
+	if s.service.concurrencyService != nil && account.Concurrency > 0 && !budget.recordAcquire(account.ID) {
+		return nil, false, nil
+	}
+	if account.HasConfiguredEgress() {
+		result, err := s.service.tryAcquireAccountEgressSlot(ctx, account)
+		return result, true, err
+	}
+	result, err := s.service.tryAcquireAccountSlot(ctx, account.ID, account.Concurrency)
 	return result, true, err
 }
 
@@ -1310,7 +1342,14 @@ func (s *defaultOpenAIAccountScheduler) tryFallbackToWeightedSticky(
 			isGrokModelQuotaBlocked(account.ID, upstreamModel, now) {
 			continue
 		}
-		result, acquireErr := s.service.tryAcquireAccountSlot(ctx, account.ID, account.Concurrency)
+		var result *AcquireResult
+		var acquireErr error
+		if account.HasConfiguredEgress() {
+			account = account.SelectEgressForRequest()
+			result, acquireErr = s.service.tryAcquireAccountEgressSlot(ctx, account)
+		} else {
+			result, acquireErr = s.service.tryAcquireAccountSlot(ctx, account.ID, account.Concurrency)
+		}
 		if acquireErr != nil {
 			return nil, acquireErr
 		}
@@ -1330,6 +1369,8 @@ func (s *defaultOpenAIAccountScheduler) tryFallbackToWeightedSticky(
 				Account: account,
 				WaitPlan: &AccountWaitPlan{
 					AccountID:      account.ID,
+					EgressKey:      account.SelectedEgressKey,
+					EgressHost:     account.SelectedEgressHost,
 					MaxConcurrency: account.Concurrency,
 					Timeout:        cfg.StickySessionWaitTimeout,
 					MaxWaiting:     cfg.StickySessionMaxWaiting,
@@ -1716,6 +1757,8 @@ func (s *defaultOpenAIAccountScheduler) finishLoadBalanceSelectionFallback(
 				Account: fresh,
 				WaitPlan: &AccountWaitPlan{
 					AccountID:      fresh.ID,
+					EgressKey:      fresh.SelectedEgressKey,
+					EgressHost:     fresh.SelectedEgressHost,
 					MaxConcurrency: fresh.Concurrency,
 					Timeout:        cfg.FallbackWaitTimeout,
 					MaxWaiting:     cfg.FallbackMaxWaiting,
