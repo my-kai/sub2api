@@ -14,6 +14,9 @@ import (
 const defaultCurrency = "CNY"
 const createApplicationNoMaxAttempts = 5
 
+// eligibleOrderWindowDays limits new invoice applications to recently completed orders.
+const eligibleOrderWindowDays = 30
+
 // Store owns SQL persistence for custom invoice applications.
 type Store struct {
 	db  *sql.DB
@@ -209,6 +212,7 @@ func (s *Store) ListEligibleOrders(ctx context.Context, userID int64) ([]Eligibl
 		WHERE po.user_id = $1
 		  AND po.order_type = $3
 		  AND po.status = ANY($4)
+		  AND po.completed_at >= NOW() - ($6 * INTERVAL '1 day')
 		  AND NOT EXISTS (
 			  SELECT 1
 			  FROM custom_invoice_application_orders iao
@@ -216,7 +220,7 @@ func (s *Store) ListEligibleOrders(ctx context.Context, userID int64) ([]Eligibl
 			  WHERE iao.order_id = po.id AND ia.status = ANY($5)
 		  )
 		ORDER BY po.paid_at DESC NULLS LAST, po.created_at DESC, po.id DESC
-	`, userID, defaultCurrency, payment.OrderTypeBalance, pq.Array(invoiceableRechargeStatuses()), pq.Array(occupyingStatuses()))
+	`, userID, defaultCurrency, payment.OrderTypeBalance, pq.Array(invoiceableRechargeStatuses()), pq.Array(occupyingStatuses()), eligibleOrderWindowDays)
 	if err != nil {
 		return nil, fmt.Errorf("list eligible invoice orders: %w", err)
 	}

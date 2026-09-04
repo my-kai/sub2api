@@ -79,9 +79,10 @@ func (s *Store) lockInvoiceableOrders(ctx context.Context, tx *sql.Tx, userID in
 		  AND id = ANY($2)
 		  AND order_type = $4
 		  AND status = ANY($5)
+		  AND completed_at >= NOW() - ($6 * INTERVAL '1 day')
 		ORDER BY id
 		FOR UPDATE
-	`, userID, pq.Array(orderIDs), defaultCurrency, payment.OrderTypeBalance, pq.Array(invoiceableRechargeStatuses()))
+	`, userID, pq.Array(orderIDs), defaultCurrency, payment.OrderTypeBalance, pq.Array(invoiceableRechargeStatuses()), eligibleOrderWindowDays)
 	if err != nil {
 		return nil, fmt.Errorf("lock invoice orders: %w", err)
 	}

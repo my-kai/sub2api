@@ -69,6 +69,14 @@
 
     <BaseDialog :show="createOpen" title="新增开票申请" width="extra-wide" @close="closeCreateDialog">
       <div class="space-y-5">
+        <!-- 开票类型和出票时间需要在用户选择订单前明确提示。 -->
+        <div class="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+          <Icon name="exclamationTriangle" size="sm" class="mt-0.5 flex-shrink-0" />
+          <div class="space-y-1">
+            <p>发票类型：非AI服务，为技术服务，介意勿开。</p>
+            <p>每周六/日出票。</p>
+          </div>
+        </div>
         <div class="grid gap-4 lg:grid-cols-[1fr_320px]">
           <section class="rounded-xl border border-gray-200 dark:border-dark-700">
             <div class="border-b border-gray-200 px-4 py-3 text-sm font-medium text-gray-900 dark:border-dark-700 dark:text-white">选择充值订单</div>
