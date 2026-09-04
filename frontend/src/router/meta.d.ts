@@ -18,6 +18,8 @@ declare module 'vue-router' {
      * @default false
      */
     requiresAdmin?: boolean
+    /** 是否要求系统管理员或发票管理授权用户。 */
+    requiresInvoiceManager?: boolean
 
     /**
      * Page title for this route

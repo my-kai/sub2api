@@ -9,6 +9,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
+	coreservice "github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/Wei-Shaw/sub2api/internal/util/logredact"
 	"github.com/gin-gonic/gin"
 )
@@ -25,6 +26,37 @@ func NewHandler(service *Service) *Handler {
 	return &Handler{service: service}
 }
 
+// RequireManagerAccess protects invoice management routes for system admins
+// and users present in the custom invoice manager allowlist.
+func RequireManagerAccess(h *Handler) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if h == nil || h.service == nil {
+			response.InternalError(c, "开票服务暂不可用")
+			c.Abort()
+			return
+		}
+		subject, ok := middleware.GetAuthSubjectFromContext(c)
+		if !ok || subject.UserID <= 0 {
+			response.Unauthorized(c, loginExpiredMessage)
+			c.Abort()
+			return
+		}
+		role, _ := middleware.GetUserRoleFromContext(c)
+		allowed, err := h.service.CanManageInvoice(c.Request.Context(), subject.UserID, role)
+		if err != nil {
+			writeError(c, err)
+			c.Abort()
+			return
+		}
+		if !allowed {
+			response.Forbidden(c, "暂无发票管理权限")
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
 // ListTitles returns current user's reusable invoice titles.
 func (h *Handler) ListTitles(c *gin.Context) {
 	subject, ok := authSubject(c)
@@ -37,6 +69,24 @@ func (h *Handler) ListTitles(c *gin.Context) {
 		return
 	}
 	response.Success(c, titles)
+}
+
+// GetInvoiceAccess returns the current caller's effective invoice management access.
+func (h *Handler) GetInvoiceAccess(c *gin.Context) {
+	subject, ok := authSubject(c)
+	if !ok {
+		return
+	}
+	role, _ := middleware.GetUserRoleFromContext(c)
+	allowed, err := h.service.CanManageInvoice(c.Request.Context(), subject.UserID, role)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	response.Success(c, gin.H{
+		"can_manage":    allowed,
+		"can_configure": role == coreservice.RoleAdmin,
+	})
 }
 
 // CreateTitle creates a reusable enterprise invoice title.
@@ -229,6 +279,38 @@ func (h *Handler) ListAdminApplications(c *gin.Context) {
 	response.Paginated(c, apps, int64(total), page, pageSize)
 }
 
+// ListInvoiceManagers returns the configured allowlist to system administrators.
+func (h *Handler) ListInvoiceManagers(c *gin.Context) {
+	if !requireSystemAdmin(c) {
+		return
+	}
+	managers, err := h.service.ListInvoiceManagers(c.Request.Context())
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	response.Success(c, gin.H{"items": managers})
+}
+
+// ReplaceInvoiceManagers replaces the configured allowlist for system administrators.
+func (h *Handler) ReplaceInvoiceManagers(c *gin.Context) {
+	subject, ok := authSubject(c)
+	if !ok || !requireSystemAdmin(c) {
+		return
+	}
+	var req invoiceManagerUpdateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "请求参数无效")
+		return
+	}
+	managers, err := h.service.ReplaceInvoiceManagers(c.Request.Context(), subject.UserID, req.UserIDs)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	response.Success(c, gin.H{"items": managers})
+}
+
 // GetAdminApplication returns one application detail for admins.
 func (h *Handler) GetAdminApplication(c *gin.Context) {
 	id, ok := parseID(c, "id")
@@ -379,6 +461,23 @@ type rejectRequest struct {
 
 type testEmailRequest struct {
 	ReceiverEmail string `json:"receiver_email"`
+}
+
+type invoiceManagerUpdateRequest struct {
+	UserIDs []int64 `json:"user_ids"`
+}
+
+func requireSystemAdmin(c *gin.Context) bool {
+	role, ok := middleware.GetUserRoleFromContext(c)
+	if !ok {
+		response.Unauthorized(c, loginExpiredMessage)
+		return false
+	}
+	if role != coreservice.RoleAdmin {
+		response.Forbidden(c, "仅系统管理员可配置发票权限")
+		return false
+	}
+	return true
 }
 
 func authSubject(c *gin.Context) (middleware.AuthSubject, bool) {

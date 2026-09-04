@@ -4,6 +4,8 @@ import type {
   EligibleInvoiceOrder,
   InvoiceApplication,
   InvoiceApplicationPage,
+  InvoiceAccess,
+  InvoiceManager,
   InvoiceTitle,
   InvoiceTitlePayload,
   RejectInvoiceApplicationPayload,
@@ -11,6 +13,26 @@ import type {
 
 const USER_PREFIX = '/custom/invoices'
 const ADMIN_PREFIX = '/admin/custom/invoices'
+
+/** Returns the current user's effective invoice-management permissions. */
+export async function getInvoiceAccess(): Promise<InvoiceAccess> {
+  const { data } = await apiClient.get<InvoiceAccess>('/custom/invoice-access')
+  return data
+}
+
+/** Returns the complete delegated-manager allowlist for system administrators. */
+export async function listInvoiceManagers(): Promise<InvoiceManager[]> {
+  const { data } = await apiClient.get<{ items: InvoiceManager[] }>('/admin/custom/invoice-managers')
+  return data.items || []
+}
+
+/** Atomically replaces the delegated-manager allowlist and returns the saved list. */
+export async function replaceInvoiceManagers(userIds: number[]): Promise<InvoiceManager[]> {
+  const { data } = await apiClient.put<{ items: InvoiceManager[] }>('/admin/custom/invoice-managers', {
+    user_ids: userIds,
+  })
+  return data.items || []
+}
 
 export async function listInvoiceTitles(): Promise<InvoiceTitle[]> {
   const { data } = await apiClient.get<InvoiceTitle[]>(`${USER_PREFIX}/titles`)

@@ -13,6 +13,18 @@ export interface InvoiceTitle {
   updated_at: string
 }
 
+/** User summary shown in the system-administrator invoice permission dialog. */
+export interface InvoiceManager {
+  user_id: number
+  email: string
+}
+
+/** Effective invoice permissions for the current authenticated user. */
+export interface InvoiceAccess {
+  can_manage: boolean
+  can_configure: boolean
+}
+
 export interface InvoiceTitlePayload {
   company_title: string
   tax_number: string

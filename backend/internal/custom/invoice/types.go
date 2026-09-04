@@ -39,6 +39,7 @@ var (
 	ErrPublicLinkInvalid   = errors.New("invoice public download link is invalid")
 	ErrPublicLinkExpired   = errors.New("invoice public download link is expired")
 	ErrPublicLinkMissing   = errors.New("invoice public download link config is missing")
+	ErrUserNotEligible     = errors.New("invoice manager user is invalid")
 )
 
 // EmailSender is the small subset of the main email service required by invoice completion.
@@ -67,6 +68,13 @@ type TitleInput struct {
 	TaxNumber     string
 	ReceiverEmail string
 	IsDefault     bool
+}
+
+// InvoiceManager is a user currently authorized to manage invoice applications.
+// Email is returned for administrator configuration UI display only.
+type InvoiceManager struct {
+	UserID int64  `json:"user_id"`
+	Email  string `json:"email"`
 }
 
 // EligibleOrder is a recharge order that can be attached to a new invoice request.

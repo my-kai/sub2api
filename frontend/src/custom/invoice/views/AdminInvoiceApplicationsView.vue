@@ -21,7 +21,12 @@
             <Icon name="refresh" size="sm" :class="{ 'animate-spin': loading }" />
             <span>刷新</span>
           </button>
-          <button type="button" class="btn btn-secondary" :disabled="testSending" @click="openTestEmailDialog">测试发件</button>
+          <button type="button" class="btn btn-secondary" :disabled="exporting" @click="exportApplications">
+            <Icon name="download" size="sm" :class="{ 'animate-pulse': exporting }" />
+            <span>{{ exporting ? '导出中...' : '导出 Excel' }}</span>
+          </button>
+          <button v-if="authStore.isAdmin" type="button" class="btn btn-secondary" :disabled="testSending" @click="openTestEmailDialog">测试发件</button>
+          <button v-if="authStore.isAdmin" type="button" class="btn btn-secondary" @click="openManagerDialog">权限配置</button>
         </div>
       </header>
 
@@ -110,6 +115,8 @@
         />
       </section>
     </div>
+
+    <InvoiceManagerAccessDialog :show="managerDialogOpen" @close="managerDialogOpen = false" />
 
     <BaseDialog :show="Boolean(detail)" title="开票申请详情" width="wide" @close="detail = null">
       <div v-if="detail" class="space-y-5">
@@ -248,6 +255,7 @@
 
 <script setup lang="ts">
 import { computed, defineComponent, h, onMounted, reactive, ref } from 'vue'
+import { saveAs } from 'file-saver'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Input from '@/components/common/Input.vue'
@@ -258,6 +266,7 @@ import TextArea from '@/components/common/TextArea.vue'
 import { useClipboard } from '@/composables/useClipboard'
 import Icon from '@/components/icons/Icon.vue'
 import { useAppStore } from '@/stores'
+import { useAuthStore } from '@/stores/auth'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import {
   downloadAdminInvoiceFile,
@@ -267,6 +276,7 @@ import {
   rejectInvoiceApplication,
   testSendGeneratedAdminInvoiceEmail,
 } from '../api'
+import InvoiceManagerAccessDialog from '../components/InvoiceManagerAccessDialog.vue'
 import type { InvoiceApplication, InvoiceApplicationStatus } from '../types'
 import {
   formatInvoiceAmount,
@@ -288,6 +298,7 @@ const InfoItem = defineComponent({
 })
 
 const appStore = useAppStore()
+const authStore = useAuthStore()
 const { copyToClipboard } = useClipboard()
 const applications = ref<InvoiceApplication[]>([])
 const loading = ref(false)
@@ -298,6 +309,7 @@ const issueTarget = ref<InvoiceApplication | null>(null)
 const rejectTarget = ref<InvoiceApplication | null>(null)
 const issueFile = ref<File | null>(null)
 const downloadingID = ref<number | null>(null)
+const exporting = ref(false)
 const testSending = ref(false)
 const testEmailDialogOpen = ref(false)
 const testEmailError = ref('')
@@ -305,6 +317,7 @@ const testEmailReceiverEmail = ref('')
 const issueError = ref('')
 const rejectError = ref('')
 const rejectReason = ref('')
+const managerDialogOpen = ref(false)
 
 const filters = reactive({
   status: '',
@@ -331,6 +344,11 @@ const statusOptions = computed(() => [
 onMounted(() => {
   void loadApplications()
 })
+
+/** 打开仅系统管理员可见的发票权限配置弹窗。 */
+function openManagerDialog(): void {
+  if (authStore.isAdmin) managerDialogOpen.value = true
+}
 
 /**
  * 读取管理员开票申请列表，并保留分页状态。
@@ -384,6 +402,87 @@ function handlePageSizeChange(pageSize: number): void {
   pagination.page_size = pageSize
   pagination.page = 1
   void loadApplications()
+}
+
+/**
+ * Exports every application matching the current filters instead of only the
+ * visible page. The list endpoint caps each response at 100 rows, so the
+ * export walks through all matching pages before creating one workbook.
+ */
+async function exportApplications(): Promise<void> {
+  if (exporting.value) return
+
+  exporting.value = true
+  try {
+    const XLSX = await import('xlsx')
+    const headers = [
+      '申请编号',
+      '用户 ID',
+      '状态',
+      '发票类型',
+      '公司抬头',
+      '税号',
+      '接收邮箱',
+      '金额',
+      '币种',
+      '订单数',
+      '发票号码',
+      '备注',
+      '驳回原因',
+      '创建时间',
+      '开票时间',
+      '更新时间',
+    ]
+    const rows: Array<Array<string | number>> = [headers]
+    const status = filters.status
+    const pageSize = 100
+    let page = 1
+    let total = 0
+
+    while (true) {
+      const result = await listAdminInvoiceApplications({ page, page_size: pageSize, status })
+      total = result.total
+      for (const app of result.items || []) {
+        rows.push([
+          app.application_no,
+          app.user_id,
+          invoiceStatusLabel(app.status),
+          app.invoice_type,
+          app.company_title,
+          app.tax_number,
+          app.receiver_email,
+          app.total_amount,
+          app.currency,
+          app.order_count,
+          app.invoice_number,
+          app.admin_remark,
+          app.reject_reason,
+          formatInvoiceDate(app.created_at),
+          formatInvoiceDate(app.issued_at),
+          formatInvoiceDate(app.updated_at),
+        ])
+      }
+
+      const received = rows.length - 1
+      if (received >= total || !result.items || result.items.length < pageSize) break
+      page += 1
+    }
+
+    const worksheet = XLSX.utils.aoa_to_sheet(rows)
+    const workbook = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(workbook, worksheet, '开票申请')
+    const content = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' })
+    const exportDate = new Date().toISOString().slice(0, 10)
+    saveAs(
+      new Blob([content], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
+      `开票申请-${exportDate}.xlsx`,
+    )
+    appStore.showSuccess(`已导出 ${rows.length - 1} 条开票申请`)
+  } catch (err) {
+    appStore.showError(extractApiErrorMessage(err, '开票申请导出失败'))
+  } finally {
+    exporting.value = false
+  }
 }
 
 /**

@@ -31,16 +31,35 @@ func RegisterUserRoutes(group gin.IRouter, h *invoice.Handler) {
 	group.GET("/custom/invoices/:id/file", h.DownloadMyFile)
 }
 
-// RegisterAdminRoutes registers admin invoice review routes.
-func RegisterAdminRoutes(group gin.IRouter, h *invoice.Handler) {
+// RegisterAccessRoutes exposes only the current user's effective invoice
+// management permission and is safe behind normal JWT authentication.
+func RegisterAccessRoutes(group gin.IRouter, h *invoice.Handler) {
+	if group == nil || h == nil {
+		return
+	}
+	group.GET("/custom/invoice-access", h.GetInvoiceAccess)
+}
+
+// RegisterManagerRoutes registers invoice processing routes shared by system
+// administrators and delegated invoice managers.
+func RegisterManagerRoutes(group gin.IRouter, h *invoice.Handler) {
 	if group == nil || h == nil {
 		return
 	}
 	group.GET("/custom/invoices", h.ListAdminApplications)
-	group.POST("/custom/invoice-test-email", h.TestSendGeneratedNotification)
 	group.GET("/custom/invoices/:id", h.GetAdminApplication)
 	group.POST("/custom/invoices/:id/issue", h.IssueApplication)
-	group.POST("/custom/invoices/:id/test-email", h.TestSendIssuedNotification)
 	group.POST("/custom/invoices/:id/reject", h.RejectApplication)
 	group.GET("/custom/invoices/:id/file", h.DownloadAdminFile)
+}
+
+// RegisterAdminRoutes registers system-admin-only invoice configuration and test routes.
+func RegisterAdminRoutes(group gin.IRouter, h *invoice.Handler) {
+	if group == nil || h == nil {
+		return
+	}
+	group.GET("/custom/invoice-managers", h.ListInvoiceManagers)
+	group.PUT("/custom/invoice-managers", h.ReplaceInvoiceManagers)
+	group.POST("/custom/invoice-test-email", h.TestSendGeneratedNotification)
+	group.POST("/custom/invoices/:id/test-email", h.TestSendIssuedNotification)
 }

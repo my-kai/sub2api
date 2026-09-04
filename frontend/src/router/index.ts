@@ -13,6 +13,7 @@ import { useRoutePrefetch } from '@/composables/useRoutePrefetch'
 import { getSetupStatus } from '@/api/setup'
 import { customActivityRouteRecords } from '@/custom/activity/routes'
 import { customInvoiceRouteRecords } from '@/custom/invoice/routes'
+import { getInvoiceAccess } from '@/custom/invoice/api'
 import { customOAuthAppRouteRecords, isCustomOAuthAuthorizeRoute } from '@/custom/oauthapp/routes'
 import { resolveAuthReturnPath } from '@/custom/oauthapp/authReturn'
 import { resolveCompletedSetupRedirectPath } from './setupRedirect'
@@ -836,6 +837,7 @@ router.beforeEach(async (to, _from, next) => {
   // Check if route requires authentication
   const requiresAuth = to.meta.requiresAuth !== false // Default to true
   const requiresAdmin = to.meta.requiresAdmin === true
+  const requiresInvoiceManager = to.meta.requiresInvoiceManager === true
 
   if (to.path === '/setup') {
     try {
@@ -960,6 +962,20 @@ router.beforeEach(async (to, _from, next) => {
     return
   }
 
+  if (requiresInvoiceManager && !authStore.isAdmin) {
+    try {
+      const access = await getInvoiceAccess()
+      if (!access.can_manage) {
+        next('/dashboard')
+        return
+      }
+    } catch {
+      appStore.showError('发票权限读取失败')
+      next('/dashboard')
+      return
+    }
+  }
+
   if (requiresAdmin && authStore.isAdmin) {
     const adminComplianceStore = useAdminComplianceStore()
     if (!adminComplianceStore.initialized) {
@@ -1023,9 +1039,10 @@ router.beforeEach(async (to, _from, next) => {
     }
   }
 
-  // Backend mode: admin gets full access, non-admin blocked
+  // Backend mode normally blocks non-admin pages. A delegated invoice manager
+  // has already passed the live permission check above, so this one route is allowed.
   if (appStore.backendModeEnabled) {
-    if (authStore.isAuthenticated && authStore.isAdmin) {
+    if (authStore.isAuthenticated && (authStore.isAdmin || requiresInvoiceManager)) {
       next()
       return
     }

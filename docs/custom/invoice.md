@@ -10,6 +10,8 @@
 - 测试发件接口：`POST /api/v1/admin/custom/invoice-test-email`，后端生成测试开票信息，不依赖真实申请记录。
 - 已开票通知补发接口：`POST /api/v1/admin/custom/invoices/:id/test-email`
 - 临时下载接口：`/api/v1/custom/invoice-downloads/:token`
+- 发票管理权限状态：`GET /api/v1/custom/invoice-access`
+- 管理员授权名单：`GET/PUT /api/v1/admin/custom/invoice-managers`
 
 ## 行为
 
@@ -25,12 +27,15 @@
 - 如果附件邮件发送失败，系统改发无需登录的临时下载链接；链接默认 24 小时过期，过期后不能下载。
 - 附件邮件和临时链接邮件都发送失败时，本次开票完成操作失败，申请保持可重试状态。
 - 发票文件仅支持单个 PDF，最大 10MB，保存到 `pricing.data_dir/custom/invoices/YYYY/MM/`。
+- 发票管理默认仅系统管理员可进入；系统管理员配置授权名单后，名单内的有效用户也可进入管理页。
+- 授权用户可查看、驳回、上传和下载发票申请，但系统不提供删除发票申请接口。
 
 ## 数据表
 
 - `custom_invoice_titles`：用户企业发票抬头，支持默认抬头和软删除。
 - `custom_invoice_applications`：开票申请、`INV{YYYYMMDD}-{10位无序码}` 申请编号、抬头快照、状态、发票号码、备注和 PDF 文件索引。
 - `custom_invoice_application_orders`：申请与充值订单的绑定关系。
+- `custom_invoice_managers`：发票管理授权用户关系；空表表示仅系统管理员可进入。
 - `custom_invoice_schema_migrations`：custom 开票独立迁移记录。
 
 ## 主仓接入点

@@ -157,6 +157,25 @@
         </div>
       </template>
 
+      <!-- Backend mode delegated users only receive the invoice-management entry. -->
+      <template v-else-if="appStore.backendModeEnabled && invoiceAccessState.canManage.value">
+        <div class="sidebar-section">
+          <router-link
+            :to="customInvoicePath('AdminInvoiceApplications', '/admin/custom/invoices')"
+            class="sidebar-link mb-1"
+            :class="{
+              'sidebar-link-active': isActive(customInvoicePath('AdminInvoiceApplications', '/admin/custom/invoices')),
+              'sidebar-link-collapsed': sidebarCollapsed
+            }"
+            :title="sidebarCollapsed ? '开票管理' : undefined"
+            @click="handleMenuItemClick(customInvoicePath('AdminInvoiceApplications', '/admin/custom/invoices'))"
+          >
+            <component :is="OrderListIcon" class="h-5 w-5 flex-shrink-0" />
+            <span class="sidebar-label" :class="{ 'sidebar-label-collapsed': sidebarCollapsed }" :aria-hidden="sidebarCollapsed ? 'true' : 'false'">开票管理</span>
+          </router-link>
+        </div>
+      </template>
+
       <!-- Regular User View -->
       <template v-else-if="!appStore.backendModeEnabled">
         <div class="sidebar-section">
@@ -241,6 +260,7 @@ import { useAdminSettingsStore, useAppStore, useAuthStore, useOnboardingStore } 
 import VersionBadge from '@/components/common/VersionBadge.vue'
 import { findCustomActivityRoute } from '@/custom/activity/routes'
 import { findCustomInvoiceRoute } from '@/custom/invoice/routes'
+import { invoiceAccessState, refreshInvoiceAccess, clearInvoiceAccess } from '@/custom/invoice/access'
 import { findCustomModelMarketplaceRoute } from '@/custom/modelMarketplace/routes'
 import { findCustomOAuthAppRoute } from '@/custom/oauthapp/routes'
 import Icon from '@/components/icons/Icon.vue'
@@ -302,7 +322,13 @@ const isAdmin = computed(() => authStore.isAdmin)
 const sidebarNavRef = ref<HTMLElement | null>(null)
 const isDark = ref(document.documentElement.classList.contains('dark'))
 
-const homePath = computed(() => (isAdmin.value ? '/admin/dashboard' : '/dashboard'))
+const homePath = computed(() => {
+  if (isAdmin.value) return '/admin/dashboard'
+  if (appStore.backendModeEnabled && invoiceAccessState.canManage.value) {
+    return customInvoicePath('AdminInvoiceApplications', '/admin/custom/invoices')
+  }
+  return '/dashboard'
+})
 
 // Track which parent nav groups are expanded
 const expandedGroups = ref<Set<string>>(new Set())
@@ -856,6 +882,9 @@ function buildSelfNavItems(withDashboard: boolean): NavItem[] {
     { path: '/profile', label: t('nav.profile'), icon: UserIcon },
     ...customMenuItemsForUser.value.map(customMenuNavItem),
   )
+  if (invoiceAccessState.canManage.value) {
+    items.push({ path: customInvoicePath('AdminInvoiceApplications', '/admin/custom/invoices'), label: '开票管理', icon: OrderListIcon, hideInSimpleMode: true })
+  }
   return items
 }
 
@@ -1092,6 +1121,20 @@ watch(
     if (v) {
       adminSettingsStore.fetch()
     }
+  },
+  { immediate: true }
+)
+
+watch(
+  () => authStore.isAuthenticated,
+  (authenticated) => {
+    if (!authenticated || authStore.isAdmin) {
+      clearInvoiceAccess()
+      return
+    }
+    void refreshInvoiceAccess(true).catch(() => {
+      appStore.showError('发票权限读取失败')
+    })
   },
   { immediate: true }
 )

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"log"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -196,16 +197,53 @@ func registerCustomInvoiceRoutes(
 	}
 
 	custominvoiceroutes.RegisterPublicRoutes(v1, bundle.Handler)
+	access := v1.Group("")
+	access.Use(gin.HandlerFunc(jwtAuth))
+	custominvoiceroutes.RegisterAccessRoutes(access, bundle.Handler)
 
 	user := v1.Group("")
 	user.Use(gin.HandlerFunc(jwtAuth))
 	user.Use(middleware2.BackendModeUserGuard(settingService))
 	custominvoiceroutes.RegisterUserRoutes(user, bundle.Handler)
 
+	manager := v1.Group("/admin")
+	manager.Use(invoiceAuthMiddleware(jwtAuth, adminAuth))
+	manager.Use(custominvoice.RequireManagerAccess(bundle.Handler))
+	manager.Use(invoiceAdminComplianceGuard(settingService))
+	custominvoiceroutes.RegisterManagerRoutes(manager, bundle.Handler)
+
 	admin := v1.Group("/admin")
 	admin.Use(gin.HandlerFunc(adminAuth))
 	admin.Use(middleware2.AdminComplianceGuard(settingService))
 	custominvoiceroutes.RegisterAdminRoutes(admin, bundle.Handler)
+}
+
+// invoiceAuthMiddleware preserves the legacy admin API-key path while allowing
+// delegated invoice managers to authenticate with their normal JWT session.
+// The selected auth middleware owns c.Next(), so this wrapper returns immediately.
+func invoiceAuthMiddleware(jwtAuth middleware2.JWTAuthMiddleware, adminAuth middleware2.AdminAuthMiddleware) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if strings.TrimSpace(c.GetHeader("x-api-key")) != "" {
+			adminAuth(c)
+			return
+		}
+		jwtAuth(c)
+	}
+}
+
+// invoiceAdminComplianceGuard keeps the existing admin compliance check for
+// system administrators while allowing delegated invoice managers to work
+// without accepting the unrelated administrator acknowledgement requirement.
+func invoiceAdminComplianceGuard(settingService *service.SettingService) gin.HandlerFunc {
+	adminGuard := middleware2.AdminComplianceGuard(settingService)
+	return func(c *gin.Context) {
+		role, _ := middleware2.GetUserRoleFromContext(c)
+		if role != service.RoleAdmin {
+			c.Next()
+			return
+		}
+		adminGuard(c)
+	}
 }
 
 // registerCustomOAuthApplicationRoutes 只在主仓路由层追加第三方 OAuth 应用入口。

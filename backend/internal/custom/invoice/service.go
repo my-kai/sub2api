@@ -78,6 +78,35 @@ func NewServiceWithOptions(store *Store, files *FileStore, opts ServiceOptions) 
 	}, nil
 }
 
+// CanManageInvoice reports whether a caller may use the invoice management APIs.
+// System administrators bypass the allowlist; regular users must be active
+// entries in the dedicated relationship table.
+func (s *Service) CanManageInvoice(ctx context.Context, userID int64, role string) (bool, error) {
+	if s == nil || s.store == nil || userID <= 0 {
+		return false, ErrInvalidInput
+	}
+	if role == coreservice.RoleAdmin {
+		return true, nil
+	}
+	return s.store.IsInvoiceManager(ctx, userID)
+}
+
+// ListInvoiceManagers returns the current allowlist for the admin configuration UI.
+func (s *Service) ListInvoiceManagers(ctx context.Context) ([]InvoiceManager, error) {
+	if s == nil || s.store == nil {
+		return nil, ErrInvalidInput
+	}
+	return s.store.ListInvoiceManagers(ctx)
+}
+
+// ReplaceInvoiceManagers validates and atomically replaces the invoice manager allowlist.
+func (s *Service) ReplaceInvoiceManagers(ctx context.Context, grantedBy int64, userIDs []int64) ([]InvoiceManager, error) {
+	if s == nil || s.store == nil || grantedBy <= 0 {
+		return nil, ErrInvalidInput
+	}
+	return s.store.ReplaceInvoiceManagers(ctx, grantedBy, userIDs)
+}
+
 // ListTitles returns the current user's invoice titles.
 func (s *Service) ListTitles(ctx context.Context, userID int64) ([]Title, error) {
 	if s == nil || s.store == nil || userID <= 0 {
@@ -574,6 +603,8 @@ func classifyError(err error) (int, string) {
 		return 500, invoiceFailureMessage("开票通知发送失败", err, ErrNotificationFailed)
 	case errors.Is(err, ErrInvalidInput), errors.Is(err, ErrInvalidStatus), errors.Is(err, ErrInvalidFile):
 		return 400, "请求参数无效"
+	case errors.Is(err, ErrUserNotEligible):
+		return 400, "授权用户无效"
 	case errors.Is(err, ErrOrderNotEligible):
 		return 400, "订单不可开票"
 	case errors.Is(err, ErrOrderOccupied):

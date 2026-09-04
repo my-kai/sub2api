@@ -12,6 +12,7 @@ export interface CustomInvoiceRouteItem {
   title: string
   requiresAuth: boolean
   requiresAdmin?: boolean
+  requiresInvoiceManager?: boolean
 }
 
 export const customInvoiceRoutes: CustomInvoiceRouteItem[] = [
@@ -35,7 +36,8 @@ export const customInvoiceRoutes: CustomInvoiceRouteItem[] = [
     label: '开票管理',
     title: '开票管理',
     requiresAuth: true,
-    requiresAdmin: true,
+    requiresAdmin: false,
+    requiresInvoiceManager: true,
   },
 ]
 
@@ -70,7 +72,8 @@ export const customInvoiceRouteRecords: RouteRecordRaw[] = [
     meta: {
       title: '开票管理',
       requiresAuth: true,
-      requiresAdmin: true,
+      requiresAdmin: false,
+      requiresInvoiceManager: true,
     },
   },
 ]
