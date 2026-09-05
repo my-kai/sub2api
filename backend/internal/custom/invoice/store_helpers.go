@@ -69,8 +69,8 @@ func (s *Store) getTitleForUpdate(ctx context.Context, tx *sql.Tx, userID, title
 	return title, nil
 }
 
-func (s *Store) lockInvoiceableOrders(ctx context.Context, tx *sql.Tx, userID int64, orderIDs []int64) ([]EligibleOrder, error) {
-	rows, err := tx.QueryContext(ctx, `
+func (s *Store) lockInvoiceableOrders(ctx context.Context, tx *sql.Tx, userID int64, orderIDs []int64, allowHistorical bool) ([]EligibleOrder, error) {
+	query := `
 		SELECT id, out_trade_no, amount::text, pay_amount::text,
 		       COALESCE(provider_snapshot->>'currency', $3) AS currency,
 		       payment_type, status, paid_at, completed_at, created_at
@@ -79,10 +79,14 @@ func (s *Store) lockInvoiceableOrders(ctx context.Context, tx *sql.Tx, userID in
 		  AND id = ANY($2)
 		  AND order_type = $4
 		  AND status = ANY($5)
-		  AND completed_at >= NOW() - ($6 * INTERVAL '1 day')
-		ORDER BY id
-		FOR UPDATE
-	`, userID, pq.Array(orderIDs), defaultCurrency, payment.OrderTypeBalance, pq.Array(invoiceableRechargeStatuses()), eligibleOrderWindowDays)
+	`
+	args := []any{userID, pq.Array(orderIDs), defaultCurrency, payment.OrderTypeBalance, pq.Array(invoiceableRechargeStatuses())}
+	if !allowHistorical {
+		query += " AND completed_at >= NOW() - ($6 * INTERVAL '1 day')\n"
+		args = append(args, eligibleOrderWindowDays)
+	}
+	query += " ORDER BY id FOR UPDATE"
+	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("lock invoice orders: %w", err)
 	}
@@ -136,7 +140,7 @@ func occupyingStatuses() []string {
 }
 
 func applicationSelectSQL() string {
-	return `SELECT id, application_no, user_id, status, invoice_type, title_id, company_title, tax_number,
+	return `SELECT id, application_no, user_id, created_by, status, invoice_type, title_id, company_title, tax_number,
 			          receiver_email, total_amount::text, currency, order_count, invoice_number,
 			          admin_remark, reject_reason, file_object_key, file_original_name, file_size,
 			          issued_by, issued_at, rejected_by, rejected_at, created_at, updated_at

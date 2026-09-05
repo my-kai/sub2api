@@ -40,6 +40,7 @@ var (
 	ErrPublicLinkExpired   = errors.New("invoice public download link is expired")
 	ErrPublicLinkMissing   = errors.New("invoice public download link config is missing")
 	ErrUserNotEligible     = errors.New("invoice manager user is invalid")
+	ErrTargetUserInvalid   = errors.New("invoice target user is invalid")
 )
 
 // EmailSender is the small subset of the main email service required by invoice completion.
@@ -111,6 +112,7 @@ type Application struct {
 	ID               int64              `json:"id"`
 	ApplicationNo    string             `json:"application_no"`
 	UserID           int64              `json:"user_id"`
+	CreatedBy        *int64             `json:"created_by,omitempty"`
 	Status           string             `json:"status"`
 	InvoiceType      string             `json:"invoice_type"`
 	TitleID          *int64             `json:"title_id,omitempty"`
@@ -137,9 +139,11 @@ type Application struct {
 
 // CreateApplicationInput contains the user-selected title and recharge orders.
 type CreateApplicationInput struct {
-	UserID   int64
-	TitleID  int64
-	OrderIDs []int64
+	UserID                int64
+	TitleID               int64
+	OrderIDs              []int64
+	CreatedBy             *int64
+	AllowHistoricalOrders bool
 }
 
 // ListApplicationsFilter controls paginated application queries.

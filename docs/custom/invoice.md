@@ -12,6 +12,9 @@
 - 临时下载接口：`/api/v1/custom/invoice-downloads/:token`
 - 发票管理权限状态：`GET /api/v1/custom/invoice-access`
 - 管理员授权名单：`GET/PUT /api/v1/admin/custom/invoice-managers`
+- 系统管理员代开申请：`POST /api/v1/admin/custom/invoices/apply-for-user`
+- 管理目标用户抬头：`GET/POST /api/v1/admin/custom/invoice-users/:user_id/titles`、`PUT/DELETE /api/v1/admin/custom/invoice-users/:user_id/titles/:id`、`POST /api/v1/admin/custom/invoice-users/:user_id/titles/:id/default`
+- 查询目标用户代开订单：`GET /api/v1/admin/custom/invoice-users/:user_id/eligible-orders`
 
 ## 行为
 
@@ -20,6 +23,10 @@
 - 一个开票申请可以合并多笔充值订单。
 - `pending`、`issued` 状态的申请会占用订单；`rejected` 状态释放订单。
 - 申请只选择已有抬头，创建申请时保存抬头快照。
+- 系统管理员可以代目标用户创建申请；代开申请使用目标用户已有抬头并归属目标用户。
+- 代开订单仍限定余额充值且状态为 `COMPLETED`，仍排除 `pending`/`issued` 申请已占用的订单，但不受一个月时间窗口限制。
+- 代开申请保存 `created_by` 管理员 ID；普通用户自行申请的记录该字段为空。
+- 系统管理员可代目标用户新增、编辑、设为默认和软删除抬头。
 - 当前仅支持企业普通发票：`enterprise_vat_normal`。
 - 管理员标记已开票时必须填写发票号码、备注，并上传 PDF。
 - 开票完成必须向抬头接收邮箱发送通知邮件，邮件内容使用现有通知邮件模板体系；优先把本次发票 PDF 作为附件发送。
@@ -34,6 +41,7 @@
 
 - `custom_invoice_titles`：用户企业发票抬头，支持默认抬头和软删除。
 - `custom_invoice_applications`：开票申请、`INV{YYYYMMDD}-{10位无序码}` 申请编号、抬头快照、状态、发票号码、备注和 PDF 文件索引。
+- `custom_invoice_applications.created_by`：代开申请的系统管理员 ID；普通用户申请为空。
 - `custom_invoice_application_orders`：申请与充值订单的绑定关系。
 - `custom_invoice_managers`：发票管理授权用户关系；空表表示仅系统管理员可进入。
 - `custom_invoice_schema_migrations`：custom 开票独立迁移记录。

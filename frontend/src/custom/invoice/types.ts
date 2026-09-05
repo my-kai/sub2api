@@ -63,6 +63,7 @@ export interface InvoiceApplication {
   id: number
   application_no: string
   user_id: number
+  created_by?: number
   status: InvoiceApplicationStatus
   invoice_type: string
   title_id?: number
@@ -89,6 +90,12 @@ export interface InvoiceApplication {
 export interface CreateInvoiceApplicationPayload {
   order_ids: number[]
   title_id: number
+}
+
+export interface CreateAdminInvoiceApplicationPayload {
+  user_id: number
+  title_id: number
+  order_ids: number[]
 }
 
 export interface RejectInvoiceApplicationPayload {

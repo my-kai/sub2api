@@ -7,6 +7,24 @@ import (
 	"github.com/lib/pq"
 )
 
+// IsActiveUser reports whether a target user can receive a delegated invoice
+// application or have invoice titles managed by an administrator.
+func (s *Store) IsActiveUser(ctx context.Context, userID int64) (bool, error) {
+	if s == nil || s.db == nil || userID <= 0 {
+		return false, ErrInvalidInput
+	}
+	var active bool
+	err := s.db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM users WHERE id = $1 AND status = 'active' AND deleted_at IS NULL
+		)
+	`, userID).Scan(&active)
+	if err != nil {
+		return false, fmt.Errorf("check invoice target user: %w", err)
+	}
+	return active, nil
+}
+
 // IsInvoiceManager reports whether an active, non-deleted user is in the
 // dedicated invoice management allowlist. System-admin bypass is handled by
 // the service layer so this query remains a pure relationship lookup.

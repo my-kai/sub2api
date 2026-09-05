@@ -26,6 +26,7 @@
             <span>{{ exporting ? '导出中...' : '导出 Excel' }}</span>
           </button>
           <button v-if="authStore.isAdmin" type="button" class="btn btn-secondary" :disabled="testSending" @click="openTestEmailDialog">测试发件</button>
+          <button v-if="authStore.isAdmin" type="button" class="btn btn-primary" @click="adminApplicationDialogOpen = true">代开申请</button>
           <button v-if="authStore.isAdmin" type="button" class="btn btn-secondary" @click="openManagerDialog">权限配置</button>
         </div>
       </header>
@@ -53,6 +54,7 @@
                 <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-300">状态</th>
                 <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-300">金额</th>
                 <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-300">抬头</th>
+                <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-300">代开管理员</th>
                 <th class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-300">创建时间</th>
                 <th class="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-300">操作</th>
               </tr>
@@ -68,6 +70,7 @@
                 </td>
                 <td class="px-4 py-3 text-sm text-gray-900 dark:text-white">{{ formatInvoiceAmount(app.total_amount, app.currency) }}</td>
                 <td class="px-4 py-3 text-sm text-gray-600 dark:text-dark-300">{{ app.company_title }}</td>
+                <td class="px-4 py-3 text-sm text-gray-600 dark:text-dark-300">{{ app.created_by ? `#${app.created_by}` : '-' }}</td>
                 <td class="px-4 py-3 text-sm text-gray-500 dark:text-dark-400">{{ formatInvoiceDate(app.created_at) }}</td>
                 <td class="px-4 py-3">
                   <div class="flex justify-end gap-1">
@@ -116,6 +119,11 @@
       </section>
     </div>
 
+    <AdminInvoiceApplicationDialog
+      :show="adminApplicationDialogOpen"
+      @close="adminApplicationDialogOpen = false"
+      @created="handleAdminApplicationCreated"
+    />
     <InvoiceManagerAccessDialog :show="managerDialogOpen" @close="managerDialogOpen = false" />
 
     <BaseDialog :show="Boolean(detail)" title="开票申请详情" width="wide" @close="detail = null">
@@ -124,6 +132,7 @@
           <InfoItem label="状态" :value="invoiceStatusLabel(detail.status)" />
           <InfoItem label="申请编号" :value="detail.application_no" />
           <InfoItem label="用户" :value="`#${detail.user_id}`" />
+          <InfoItem label="代开管理员" :value="detail.created_by ? `#${detail.created_by}` : '-'" />
           <InfoItem label="金额" :value="formatInvoiceAmount(detail.total_amount, detail.currency)" />
           <InfoItem label="订单数" :value="String(detail.order_count)" />
           <InfoItem label="创建时间" :value="formatInvoiceDate(detail.created_at)" />
@@ -277,6 +286,7 @@ import {
   testSendGeneratedAdminInvoiceEmail,
 } from '../api'
 import InvoiceManagerAccessDialog from '../components/InvoiceManagerAccessDialog.vue'
+import AdminInvoiceApplicationDialog from '../components/AdminInvoiceApplicationDialog.vue'
 import type { InvoiceApplication, InvoiceApplicationStatus } from '../types'
 import {
   formatInvoiceAmount,
@@ -318,6 +328,7 @@ const issueError = ref('')
 const rejectError = ref('')
 const rejectReason = ref('')
 const managerDialogOpen = ref(false)
+const adminApplicationDialogOpen = ref(false)
 
 const filters = reactive({
   status: '',
@@ -348,6 +359,12 @@ onMounted(() => {
 /** 打开仅系统管理员可见的发票权限配置弹窗。 */
 function openManagerDialog(): void {
   if (authStore.isAdmin) managerDialogOpen.value = true
+}
+
+/** Refreshes the review list after a system administrator creates a delegated application. */
+function handleAdminApplicationCreated(): void {
+  adminApplicationDialogOpen.value = false
+  void loadApplications()
 }
 
 /**
@@ -421,6 +438,7 @@ async function exportApplications(): Promise<void> {
       '状态',
       '发票类型',
       '公司抬头',
+      '代开管理员',
       '税号',
       '接收邮箱',
       '金额',
@@ -449,6 +467,7 @@ async function exportApplications(): Promise<void> {
           invoiceStatusLabel(app.status),
           app.invoice_type,
           app.company_title,
+          app.created_by ? `#${app.created_by}` : '-',
           app.tax_number,
           app.receiver_email,
           app.total_amount,
@@ -472,7 +491,8 @@ async function exportApplications(): Promise<void> {
     const workbook = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(workbook, worksheet, '开票申请')
     const content = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' })
-    const exportDate = new Date().toISOString().slice(0, 10)
+    const now = new Date()
+    const exportDate = [now.getFullYear(), String(now.getMonth() + 1).padStart(2, '0'), String(now.getDate()).padStart(2, '0')].join('-')
     saveAs(
       new Blob([content], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
       `开票申请-${exportDate}.xlsx`,

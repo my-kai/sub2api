@@ -60,6 +60,13 @@ func RegisterAdminRoutes(group gin.IRouter, h *invoice.Handler) {
 	}
 	group.GET("/custom/invoice-managers", h.ListInvoiceManagers)
 	group.PUT("/custom/invoice-managers", h.ReplaceInvoiceManagers)
+	group.GET("/custom/invoice-users/:user_id/titles", h.ListAdminUserTitles)
+	group.POST("/custom/invoice-users/:user_id/titles", h.CreateAdminUserTitle)
+	group.PUT("/custom/invoice-users/:user_id/titles/:id", h.UpdateAdminUserTitle)
+	group.DELETE("/custom/invoice-users/:user_id/titles/:id", h.DeleteAdminUserTitle)
+	group.POST("/custom/invoice-users/:user_id/titles/:id/default", h.SetAdminUserDefaultTitle)
+	group.GET("/custom/invoice-users/:user_id/eligible-orders", h.ListAdminEligibleOrders)
+	group.POST("/custom/invoices/apply-for-user", h.CreateAdminApplication)
 	group.POST("/custom/invoice-test-email", h.TestSendGeneratedNotification)
 	group.POST("/custom/invoices/:id/test-email", h.TestSendIssuedNotification)
 }

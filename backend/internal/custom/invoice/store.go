@@ -228,6 +228,36 @@ func (s *Store) ListEligibleOrders(ctx context.Context, userID int64) ([]Eligibl
 	return scanEligibleOrders(rows)
 }
 
+// ListAdminEligibleOrders lists all historical completed balance recharge
+// orders that are not occupied by an active invoice application. The admin
+// path intentionally omits the user-facing one-month window.
+func (s *Store) ListAdminEligibleOrders(ctx context.Context, userID int64) ([]EligibleOrder, error) {
+	if s == nil || s.db == nil || userID <= 0 {
+		return nil, ErrInvalidInput
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT po.id, po.out_trade_no, po.amount::text, po.pay_amount::text,
+		       COALESCE(po.provider_snapshot->>'currency', $2) AS currency,
+		       po.payment_type, po.status, po.paid_at, po.completed_at, po.created_at
+		FROM payment_orders po
+		WHERE po.user_id = $1
+		  AND po.order_type = $3
+		  AND po.status = ANY($4)
+		  AND NOT EXISTS (
+			  SELECT 1
+			  FROM custom_invoice_application_orders iao
+			  JOIN custom_invoice_applications ia ON ia.id = iao.application_id
+			  WHERE iao.order_id = po.id AND ia.status = ANY($5)
+		  )
+		ORDER BY po.completed_at DESC NULLS LAST, po.created_at DESC, po.id DESC
+	`, userID, defaultCurrency, payment.OrderTypeBalance, pq.Array(invoiceableRechargeStatuses()), pq.Array(occupyingStatuses()))
+	if err != nil {
+		return nil, fmt.Errorf("list admin eligible invoice orders: %w", err)
+	}
+	defer rows.Close()
+	return scanEligibleOrders(rows)
+}
+
 // CreateApplication creates one invoice application and occupies selected orders atomically.
 func (s *Store) CreateApplication(ctx context.Context, input CreateApplicationInput) (Application, error) {
 	if s == nil || s.db == nil || input.UserID <= 0 || input.TitleID <= 0 || len(input.OrderIDs) == 0 {
@@ -264,7 +294,7 @@ func (s *Store) createApplicationWithNumber(ctx context.Context, input CreateApp
 	if err != nil {
 		return Application{}, err
 	}
-	orders, err := s.lockInvoiceableOrders(ctx, tx, input.UserID, input.OrderIDs)
+	orders, err := s.lockInvoiceableOrders(ctx, tx, input.UserID, input.OrderIDs, input.AllowHistoricalOrders)
 	if err != nil {
 		return Application{}, err
 	}
@@ -281,14 +311,14 @@ func (s *Store) createApplicationWithNumber(ctx context.Context, input CreateApp
 
 	row := tx.QueryRowContext(ctx, `
 		INSERT INTO custom_invoice_applications (
-			application_no, user_id, status, invoice_type, title_id, company_title, tax_number,
+			application_no, user_id, created_by, status, invoice_type, title_id, company_title, tax_number,
 			receiver_email, total_amount, currency, order_count, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::decimal, $10, $11, NOW(), NOW())
-		RETURNING id, application_no, user_id, status, invoice_type, title_id, company_title, tax_number,
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::decimal, $11, $12, NOW(), NOW())
+		RETURNING id, application_no, user_id, created_by, status, invoice_type, title_id, company_title, tax_number,
 		          receiver_email, total_amount::text, currency, order_count, invoice_number,
 		          admin_remark, reject_reason, file_object_key, file_original_name, file_size,
 		          issued_by, issued_at, rejected_by, rejected_at, created_at, updated_at
-	`, applicationNo, input.UserID, StatusPending, InvoiceTypeEnterpriseVATNormal, title.ID, title.CompanyTitle, title.TaxNumber,
+	`, applicationNo, input.UserID, input.CreatedBy, StatusPending, InvoiceTypeEnterpriseVATNormal, title.ID, title.CompanyTitle, title.TaxNumber,
 		title.ReceiverEmail, total, currency, len(orders))
 	app, err := scanApplication(row)
 	if err != nil {
@@ -364,7 +394,7 @@ func (s *Store) IssueApplication(ctx context.Context, id int64, input IssueInput
 		SET status = $2, invoice_number = $3, admin_remark = $4, file_object_key = $5,
 		    file_original_name = $6, file_size = $7, issued_by = $8, issued_at = NOW(), updated_at = NOW()
 		WHERE id = $1 AND status = $9
-		RETURNING id, application_no, user_id, status, invoice_type, title_id, company_title, tax_number,
+		RETURNING id, application_no, user_id, created_by, status, invoice_type, title_id, company_title, tax_number,
 		          receiver_email, total_amount::text, currency, order_count, invoice_number,
 		          admin_remark, reject_reason, file_object_key, file_original_name, file_size,
 		          issued_by, issued_at, rejected_by, rejected_at, created_at, updated_at
@@ -418,7 +448,7 @@ func (s *Store) RejectApplication(ctx context.Context, id int64, input RejectInp
 		UPDATE custom_invoice_applications
 		SET status = $2, reject_reason = $3, rejected_by = $4, rejected_at = NOW(), updated_at = NOW()
 		WHERE id = $1 AND status = $5
-		RETURNING id, application_no, user_id, status, invoice_type, title_id, company_title, tax_number,
+		RETURNING id, application_no, user_id, created_by, status, invoice_type, title_id, company_title, tax_number,
 		          receiver_email, total_amount::text, currency, order_count, invoice_number,
 		          admin_remark, reject_reason, file_object_key, file_original_name, file_size,
 		          issued_by, issued_at, rejected_by, rejected_at, created_at, updated_at

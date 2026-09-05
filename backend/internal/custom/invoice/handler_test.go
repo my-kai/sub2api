@@ -47,7 +47,7 @@ func TestDownloadTemporaryFileDoesNotRequireLoginAndExpires(t *testing.T) {
 	mock.ExpectQuery("FROM custom_invoice_applications").
 		WithArgs(int64(100)).
 		WillReturnRows(applicationRows(now).AddRow(
-			int64(100), "INV20260705-K7Q9M2X4PA", int64(7), StatusIssued, InvoiceTypeEnterpriseVATNormal, int64(10),
+			int64(100), "INV20260705-K7Q9M2X4PA", int64(7), nil, StatusIssued, InvoiceTypeEnterpriseVATNormal, int64(10),
 			"Snapshot Inc", "TAX999", "invoice@example.com", "30.50000000", "CNY", 1,
 			"FP-20260705", "已开票", "", objectKey, "issued.pdf", int64(16), int64(1), now, nil, nil, now, now,
 		))

@@ -103,6 +103,7 @@ func TestStoreCreateApplicationBindsMultipleRechargeOrdersWithTitleSnapshot(t *t
 		WithArgs(
 			sqlmock.AnyArg(),
 			int64(7),
+			nil,
 			StatusPending,
 			InvoiceTypeEnterpriseVATNormal,
 			int64(10),
@@ -114,7 +115,7 @@ func TestStoreCreateApplicationBindsMultipleRechargeOrdersWithTitleSnapshot(t *t
 			2,
 		).
 		WillReturnRows(applicationRows(now).AddRow(
-			int64(100), "INV20260705-K7Q9M2X4PA", int64(7), StatusPending, InvoiceTypeEnterpriseVATNormal, int64(10),
+			int64(100), "INV20260705-K7Q9M2X4PA", int64(7), nil, StatusPending, InvoiceTypeEnterpriseVATNormal, int64(10),
 			"Snapshot Inc", "TAX999", "invoice@example.com", "30.50000000", "CNY", 2,
 			"", "", "", "", "", int64(0), nil, nil, nil, nil, now, now,
 		))
@@ -128,7 +129,7 @@ func TestStoreCreateApplicationBindsMultipleRechargeOrdersWithTitleSnapshot(t *t
 	mock.ExpectQuery(regexp.QuoteMeta("FROM custom_invoice_applications")).
 		WithArgs(int64(100), int64(7)).
 		WillReturnRows(applicationRows(now).AddRow(
-			int64(100), "INV20260705-K7Q9M2X4PA", int64(7), StatusPending, InvoiceTypeEnterpriseVATNormal, int64(10),
+			int64(100), "INV20260705-K7Q9M2X4PA", int64(7), nil, StatusPending, InvoiceTypeEnterpriseVATNormal, int64(10),
 			"Snapshot Inc", "TAX999", "invoice@example.com", "30.50000000", "CNY", 2,
 			"", "", "", "", "", int64(0), nil, nil, nil, nil, now, now,
 		))
@@ -253,7 +254,7 @@ func TestServiceIssueApplicationSendsPDFNotificationAttachment(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta("UPDATE custom_invoice_applications")).
 		WithArgs(int64(100), StatusIssued, "FP-20260705", "已开票", sqlmock.AnyArg(), "issued.pdf", file.Size, int64(1), StatusPending).
 		WillReturnRows(applicationRows(now).AddRow(
-			int64(100), "INV20260705-K7Q9M2X4PA", int64(7), StatusIssued, InvoiceTypeEnterpriseVATNormal, int64(10),
+			int64(100), "INV20260705-K7Q9M2X4PA", int64(7), nil, StatusIssued, InvoiceTypeEnterpriseVATNormal, int64(10),
 			"Snapshot Inc", "TAX999", "invoice@example.com", "30.50000000", "CNY", 1,
 			"FP-20260705", "已开票", "", "custom/invoices/2026/07/100.pdf", "issued.pdf", file.Size, int64(1), now, nil, nil, now, now,
 		))
@@ -306,7 +307,7 @@ func TestServiceIssueApplicationRollsBackWhenNotificationFails(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta("UPDATE custom_invoice_applications")).
 		WithArgs(int64(100), StatusIssued, "FP-20260705", "已开票", sqlmock.AnyArg(), "issued.pdf", file.Size, int64(1), StatusPending).
 		WillReturnRows(applicationRows(now).AddRow(
-			int64(100), "INV20260705-K7Q9M2X4PA", int64(7), StatusIssued, InvoiceTypeEnterpriseVATNormal, int64(10),
+			int64(100), "INV20260705-K7Q9M2X4PA", int64(7), nil, StatusIssued, InvoiceTypeEnterpriseVATNormal, int64(10),
 			"Snapshot Inc", "TAX999", "invoice@example.com", "30.50000000", "CNY", 1,
 			"FP-20260705", "已开票", "", "custom/invoices/2026/07/100.pdf", "issued.pdf", file.Size, int64(1), now, nil, nil, now, now,
 		))
@@ -352,7 +353,7 @@ func TestServiceIssueApplicationFallsBackToTemporaryDownloadLink(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta("UPDATE custom_invoice_applications")).
 		WithArgs(int64(100), StatusIssued, "FP-20260705", "已开票", sqlmock.AnyArg(), "issued.pdf", file.Size, int64(1), StatusPending).
 		WillReturnRows(applicationRows(now).AddRow(
-			int64(100), "INV20260705-K7Q9M2X4PA", int64(7), StatusIssued, InvoiceTypeEnterpriseVATNormal, int64(10),
+			int64(100), "INV20260705-K7Q9M2X4PA", int64(7), nil, StatusIssued, InvoiceTypeEnterpriseVATNormal, int64(10),
 			"Snapshot Inc", "TAX999", "invoice@example.com", "30.50000000", "CNY", 1,
 			"FP-20260705", "已开票", "", "custom/invoices/2026/07/100.pdf", "issued.pdf", file.Size, int64(1), now, nil, nil, now, now,
 		))
@@ -397,7 +398,7 @@ func TestServiceTestSendIssuedNotificationResendsWithoutStatusChange(t *testing.
 	mock.ExpectQuery(regexp.QuoteMeta("FROM custom_invoice_applications")).
 		WithArgs(int64(100)).
 		WillReturnRows(applicationRows(now).AddRow(
-			int64(100), "INV20260705-K7Q9M2X4PA", int64(7), StatusIssued, InvoiceTypeEnterpriseVATNormal, int64(10),
+			int64(100), "INV20260705-K7Q9M2X4PA", int64(7), nil, StatusIssued, InvoiceTypeEnterpriseVATNormal, int64(10),
 			"Snapshot Inc", "TAX999", "invoice@example.com", "30.50000000", "CNY", 1,
 			"FP-20260705", "已开票", "", objectKey, "issued.pdf", int64(21), int64(1), now, nil, nil, now, now,
 		))
@@ -430,7 +431,7 @@ func TestServiceTestSendIssuedNotificationRequiresIssuedApplication(t *testing.T
 	mock.ExpectQuery(regexp.QuoteMeta("FROM custom_invoice_applications")).
 		WithArgs(int64(100)).
 		WillReturnRows(applicationRows(now).AddRow(
-			int64(100), "INV20260705-K7Q9M2X4PA", int64(7), StatusPending, InvoiceTypeEnterpriseVATNormal, int64(10),
+			int64(100), "INV20260705-K7Q9M2X4PA", int64(7), nil, StatusPending, InvoiceTypeEnterpriseVATNormal, int64(10),
 			"Snapshot Inc", "TAX999", "invoice@example.com", "30.50000000", "CNY", 1,
 			"", "", "", "", "", int64(0), nil, nil, nil, nil, now, now,
 		))
@@ -663,7 +664,7 @@ func eligibleOrderRows() *sqlmock.Rows {
 
 func applicationRows(_ time.Time) *sqlmock.Rows {
 	return sqlmock.NewRows([]string{
-		"id", "application_no", "user_id", "status", "invoice_type", "title_id",
+		"id", "application_no", "user_id", "created_by", "status", "invoice_type", "title_id",
 		"company_title", "tax_number", "receiver_email", "total_amount",
 		"currency", "order_count", "invoice_number", "admin_remark",
 		"reject_reason", "file_object_key", "file_original_name", "file_size",

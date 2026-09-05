@@ -1,6 +1,7 @@
 import { apiClient } from '@/api/client'
 import type {
   CreateInvoiceApplicationPayload,
+  CreateAdminInvoiceApplicationPayload,
   EligibleInvoiceOrder,
   InvoiceApplication,
   InvoiceApplicationPage,
@@ -80,6 +81,47 @@ export async function getMyInvoiceApplication(id: number): Promise<InvoiceApplic
 
 export async function listAdminInvoiceApplications(params: { page?: number; page_size?: number; status?: string; user_id?: number }): Promise<InvoiceApplicationPage> {
   const { data } = await apiClient.get<InvoiceApplicationPage>(ADMIN_PREFIX, { params })
+  return data
+}
+
+/** Reads a target user's active invoice titles for system-admin delegation. */
+export async function listAdminInvoiceTitles(userId: number): Promise<InvoiceTitle[]> {
+  const { data } = await apiClient.get<InvoiceTitle[]>(`/admin/custom/invoice-users/${userId}/titles`)
+  return data
+}
+
+/** Creates an invoice title owned by the selected target user. */
+export async function createAdminInvoiceTitle(userId: number, payload: InvoiceTitlePayload): Promise<InvoiceTitle> {
+  const { data } = await apiClient.post<InvoiceTitle>(`/admin/custom/invoice-users/${userId}/titles`, payload)
+  return data
+}
+
+/** Updates an invoice title owned by the selected target user. */
+export async function updateAdminInvoiceTitle(userId: number, id: number, payload: InvoiceTitlePayload): Promise<InvoiceTitle> {
+  const { data } = await apiClient.put<InvoiceTitle>(`/admin/custom/invoice-users/${userId}/titles/${id}`, payload)
+  return data
+}
+
+/** Soft-deletes an invoice title owned by the selected target user. */
+export async function deleteAdminInvoiceTitle(userId: number, id: number): Promise<void> {
+  await apiClient.delete(`/admin/custom/invoice-users/${userId}/titles/${id}`)
+}
+
+/** Sets one target-user invoice title as default. */
+export async function setAdminDefaultInvoiceTitle(userId: number, id: number): Promise<InvoiceTitle> {
+  const { data } = await apiClient.post<InvoiceTitle>(`/admin/custom/invoice-users/${userId}/titles/${id}/default`)
+  return data
+}
+
+/** Reads all historical completed recharge orders available for delegation. */
+export async function listAdminEligibleInvoiceOrders(userId: number): Promise<EligibleInvoiceOrder[]> {
+  const { data } = await apiClient.get<{ items: EligibleInvoiceOrder[] }>(`/admin/custom/invoice-users/${userId}/eligible-orders`)
+  return data.items || []
+}
+
+/** Creates a pending invoice application on behalf of a target user. */
+export async function createAdminInvoiceApplication(payload: CreateAdminInvoiceApplicationPayload): Promise<InvoiceApplication> {
+  const { data } = await apiClient.post<InvoiceApplication>(`${ADMIN_PREFIX}/apply-for-user`, payload)
   return data
 }
 

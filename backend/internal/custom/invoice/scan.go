@@ -76,6 +76,7 @@ func scanApplication(row rowScanner) (Application, error) {
 		&app.ID,
 		&app.ApplicationNo,
 		&app.UserID,
+		&app.CreatedBy,
 		&app.Status,
 		&app.InvoiceType,
 		&app.TitleID,

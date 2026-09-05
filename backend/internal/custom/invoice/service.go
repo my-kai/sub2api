@@ -155,6 +155,18 @@ func (s *Service) ListEligibleOrders(ctx context.Context, userID int64) ([]Eligi
 	return s.store.ListEligibleOrders(ctx, userID)
 }
 
+// ListAdminEligibleOrders returns all historical completed recharge orders a
+// system administrator may select for a target user's invoice application.
+func (s *Service) ListAdminEligibleOrders(ctx context.Context, userID int64) ([]EligibleOrder, error) {
+	if s == nil || s.store == nil || userID <= 0 {
+		return nil, ErrInvalidInput
+	}
+	if err := s.ensureActiveUser(ctx, userID); err != nil {
+		return nil, err
+	}
+	return s.store.ListAdminEligibleOrders(ctx, userID)
+}
+
 // CreateApplication creates one pending invoice request from selected orders and title.
 func (s *Service) CreateApplication(ctx context.Context, input CreateApplicationInput) (Application, error) {
 	if s == nil || s.store == nil || input.UserID <= 0 || input.TitleID <= 0 {
@@ -165,7 +177,50 @@ func (s *Service) CreateApplication(ctx context.Context, input CreateApplication
 		return Application{}, err
 	}
 	input.OrderIDs = ids
+	input.AllowHistoricalOrders = false
+	input.CreatedBy = nil
 	return s.store.CreateApplication(ctx, input)
+}
+
+// CreateAdminApplication creates a pending application on behalf of a target
+// user. The caller must already be authenticated as a system administrator;
+// this service method still validates the target and records the operator.
+func (s *Service) CreateAdminApplication(ctx context.Context, adminID int64, input CreateApplicationInput) (Application, error) {
+	if s == nil || s.store == nil || adminID <= 0 || input.UserID <= 0 || input.TitleID <= 0 {
+		return Application{}, ErrInvalidInput
+	}
+	if err := s.ensureActiveUser(ctx, input.UserID); err != nil {
+		return Application{}, err
+	}
+	ids, err := validateUniquePositiveIDs(input.OrderIDs)
+	if err != nil {
+		return Application{}, err
+	}
+	operator := adminID
+	input.OrderIDs = ids
+	input.CreatedBy = &operator
+	input.AllowHistoricalOrders = true
+	return s.store.CreateApplication(ctx, input)
+}
+
+// EnsureActiveUser rejects disabled or deleted users before an administrator
+// can read or mutate their invoice data.
+func (s *Service) EnsureActiveUser(ctx context.Context, userID int64) error {
+	return s.ensureActiveUser(ctx, userID)
+}
+
+func (s *Service) ensureActiveUser(ctx context.Context, userID int64) error {
+	if s == nil || s.store == nil || userID <= 0 {
+		return ErrInvalidInput
+	}
+	active, err := s.store.IsActiveUser(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if !active {
+		return ErrTargetUserInvalid
+	}
+	return nil
 }
 
 // ListUserApplications returns paginated applications for a user.
@@ -605,6 +660,8 @@ func classifyError(err error) (int, string) {
 		return 400, "请求参数无效"
 	case errors.Is(err, ErrUserNotEligible):
 		return 400, "授权用户无效"
+	case errors.Is(err, ErrTargetUserInvalid):
+		return 400, "目标用户无效"
 	case errors.Is(err, ErrOrderNotEligible):
 		return 400, "订单不可开票"
 	case errors.Is(err, ErrOrderOccupied):
