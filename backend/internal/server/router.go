@@ -21,6 +21,8 @@ import (
 	custominvoiceroutes "github.com/Wei-Shaw/sub2api/internal/custom/invoice/routes"
 	customoauthapp "github.com/Wei-Shaw/sub2api/internal/custom/oauthapp"
 	customoauthapproutes "github.com/Wei-Shaw/sub2api/internal/custom/oauthapp/routes"
+	custompromptauditv2 "github.com/Wei-Shaw/sub2api/internal/custom/promptauditv2"
+	custompromptauditv2routes "github.com/Wei-Shaw/sub2api/internal/custom/promptauditv2/routes"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/server/routes"
@@ -55,6 +57,7 @@ func SetupRouter(
 	customCallbackAuth *customcallbackauth.Bundle,
 	customInvoice *custominvoice.Bundle,
 	customOAuthApp *customoauthapp.Bundle,
+	customPromptAuditV2 *custompromptauditv2.Bundle,
 ) *gin.Engine {
 	middleware2.SetIngressRejectRecorder(opsService)
 	// 缓存 iframe 页面的 origin 列表，用于动态注入 CSP frame-src
@@ -109,7 +112,7 @@ func SetupRouter(
 	}
 
 	// 注册路由
-	registerRoutes(r, handlers, jwtAuth, optionalJWTAuth, adminAuth, apiKeyAuth, auditLog, stepUpAuth, apiKeyService, subscriptionService, opsService, settingService, compositeResolver, cfg, redisClient, customAIGatewayAdminTransfer, customActivity, customCallbackAuth, customInvoice, customOAuthApp)
+	registerRoutes(r, handlers, jwtAuth, optionalJWTAuth, adminAuth, apiKeyAuth, auditLog, stepUpAuth, apiKeyService, subscriptionService, opsService, settingService, compositeResolver, cfg, redisClient, customAIGatewayAdminTransfer, customActivity, customCallbackAuth, customInvoice, customOAuthApp, customPromptAuditV2)
 
 	return r
 }
@@ -136,6 +139,7 @@ func registerRoutes(
 	customCallbackAuth *customcallbackauth.Bundle,
 	customInvoice *custominvoice.Bundle,
 	customOAuthApp *customoauthapp.Bundle,
+	customPromptAuditV2 *custompromptauditv2.Bundle,
 ) {
 	// 通用路由（健康检查、状态等）
 	routes.RegisterCommonRoutes(r)
@@ -160,8 +164,28 @@ func registerRoutes(
 	registerCustomOAuthApplicationRoutes(v1, customOAuthApp, jwtAuth, adminAuth, settingService)
 	registerCustomActivityRoutes(v1, customActivity, jwtAuth, adminAuth, settingService)
 	registerCustomAIGatewayAdminTransferRoutes(v1, customAIGatewayAdminTransfer, adminAuth)
+	registerCustomPromptAuditV2Routes(v1, customPromptAuditV2, adminAuth, auditLog, settingService)
 
 	handler.RegisterPageRoutes(v1, cfg.Pricing.DataDir, gin.HandlerFunc(jwtAuth), gin.HandlerFunc(adminAuth), settingService)
+}
+
+// registerCustomPromptAuditV2Routes mounts only the authenticated management
+// surface; gateway behavior is injected through the shared coordinator.
+func registerCustomPromptAuditV2Routes(
+	v1 *gin.RouterGroup,
+	bundle *custompromptauditv2.Bundle,
+	adminAuth middleware2.AdminAuthMiddleware,
+	auditLog middleware2.AuditLogMiddleware,
+	settingService *service.SettingService,
+) {
+	if v1 == nil || bundle == nil || bundle.Handler == nil {
+		return
+	}
+	admin := v1.Group("/admin")
+	admin.Use(gin.HandlerFunc(adminAuth))
+	admin.Use(gin.HandlerFunc(auditLog))
+	admin.Use(middleware2.AdminComplianceGuard(settingService))
+	custompromptauditv2routes.RegisterAdminRoutes(admin, bundle.Handler)
 }
 
 // registerCustomAIGatewayAdminTransferRoutes 仅挂载 ai-gateway 服务端使用的管理员 API Key 来源扣款接口。

@@ -21,6 +21,7 @@ import (
 	custominvoice "github.com/Wei-Shaw/sub2api/internal/custom/invoice"
 	custommodelrateruntime "github.com/Wei-Shaw/sub2api/internal/custom/modelratemultiplier/runtime"
 	customoauthapp "github.com/Wei-Shaw/sub2api/internal/custom/oauthapp"
+	custompromptauditv2 "github.com/Wei-Shaw/sub2api/internal/custom/promptauditv2"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/payment"
 	"github.com/Wei-Shaw/sub2api/internal/repository"
@@ -61,6 +62,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 		provideGiftCreditWiring,
 		provideInvoiceBundle,
 		customoauthapp.ProvideBundle,
+		custompromptauditv2.ProviderSet,
 
 		// Server layer ProviderSet
 		server.ProviderSet,
@@ -179,6 +181,7 @@ func provideCleanup(
 	auditLog *service.AuditLogService,
 	openAIAutoReset *service.OpenAIQuotaAutoResetService,
 	promptAudit *securityaudit.PromptService,
+	promptAuditV2 *custompromptauditv2.Bundle,
 	pluginManager *service.PluginManager,
 ) func() {
 	return func() {
@@ -192,6 +195,12 @@ func provideCleanup(
 
 		// 应用层清理步骤可并行执行，基础设施资源（Redis/Ent）最后按顺序关闭。
 		parallelSteps := []cleanupStep{
+			{"PromptAuditV2", func() error {
+				if promptAuditV2 != nil && promptAuditV2.Service != nil {
+					promptAuditV2.Service.Close()
+				}
+				return nil
+			}},
 			{"PluginManager", func() error {
 				if pluginManager != nil {
 					pluginManager.Stop()

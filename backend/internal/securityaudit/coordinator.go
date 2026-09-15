@@ -17,18 +17,37 @@ type PromptEngine interface {
 	Evaluate(ctx context.Context, req Request) (*PromptDecision, error)
 }
 
+// PreflightEngine is the thin extension seam for a synchronous custom audit
+// that must run before the existing content and prompt engines.
+type PreflightEngine interface {
+	Check(ctx context.Context, req Request) Decision
+}
+
 type Coordinator struct {
-	legacy LegacyEngine
-	prompt PromptEngine
+	legacy    LegacyEngine
+	prompt    PromptEngine
+	preflight PreflightEngine
 }
 
 func NewCoordinator(legacy LegacyEngine, prompt PromptEngine) *Coordinator {
 	return &Coordinator{legacy: legacy, prompt: prompt}
 }
 
+// NewCoordinatorWithPreflight builds the production coordinator with the
+// custom fail-closed gate while retaining NewCoordinator for isolated callers.
+func NewCoordinatorWithPreflight(legacy LegacyEngine, prompt PromptEngine, preflight PreflightEngine) *Coordinator {
+	return &Coordinator{legacy: legacy, prompt: prompt, preflight: preflight}
+}
+
 func (c *Coordinator) Check(ctx context.Context, req Request) Decision {
 	if c == nil {
 		return allowDecision(nil, nil)
+	}
+	if c.preflight != nil {
+		decision := c.preflight.Check(ctx, req.Clone())
+		if !decision.AllowNextStage {
+			return decision
+		}
 	}
 	mode := ModeOff
 	if c.prompt != nil {

@@ -14,6 +14,7 @@ import (
 	customcallbackauth "github.com/Wei-Shaw/sub2api/internal/custom/callbackauth"
 	custominvoice "github.com/Wei-Shaw/sub2api/internal/custom/invoice"
 	customoauthapp "github.com/Wei-Shaw/sub2api/internal/custom/oauthapp"
+	custompromptauditv2 "github.com/Wei-Shaw/sub2api/internal/custom/promptauditv2"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/websearch"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -52,6 +53,7 @@ func ProvideRouter(
 	customCallbackAuth *customcallbackauth.Bundle,
 	customInvoice *custominvoice.Bundle,
 	customOAuthApp *customoauthapp.Bundle,
+	customPromptAuditV2 *custompromptauditv2.Bundle,
 ) *gin.Engine {
 	if cfg.Server.Mode == "release" {
 		gin.SetMode(gin.ReleaseMode)
@@ -97,7 +99,7 @@ func ProvideRouter(
 		service.SetWebSearchManager(websearch.NewManager(configs, redisClient))
 	})
 
-	return SetupRouter(r, handlers, jwtAuth, optionalJWTAuth, adminAuth, apiKeyAuth, auditLog, stepUpAuth, apiKeyService, subscriptionService, opsService, settingService, compositeResolver, cfg, redisClient, customAIGatewayAdminTransfer, customActivity, customCallbackAuth, customInvoice, customOAuthApp)
+	return SetupRouter(r, handlers, jwtAuth, optionalJWTAuth, adminAuth, apiKeyAuth, auditLog, stepUpAuth, apiKeyService, subscriptionService, opsService, settingService, compositeResolver, cfg, redisClient, customAIGatewayAdminTransfer, customActivity, customCallbackAuth, customInvoice, customOAuthApp, customPromptAuditV2)
 }
 
 func configureTrustedProxies(r *gin.Engine, cfg config.ServerConfig) {
