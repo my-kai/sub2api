@@ -20,6 +20,7 @@ import (
 	customgiftcreditruntime "github.com/Wei-Shaw/sub2api/internal/custom/giftcredit/runtime"
 	custominvoice "github.com/Wei-Shaw/sub2api/internal/custom/invoice"
 	custommodelrateruntime "github.com/Wei-Shaw/sub2api/internal/custom/modelratemultiplier/runtime"
+	custommodelrateservice "github.com/Wei-Shaw/sub2api/internal/custom/modelratemultiplier/service"
 	customoauthapp "github.com/Wei-Shaw/sub2api/internal/custom/oauthapp"
 	custompromptauditv2 "github.com/Wei-Shaw/sub2api/internal/custom/promptauditv2"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
@@ -57,7 +58,9 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 		customactivityruntime.ProvideBundleWithMainDeps,
 		customcallbackauth.ProvideBundle,
 		customgiftcreditruntime.ProvideBundleFromEnv,
-		custommodelrateruntime.ProvideBundle,
+		provideModelRateBundle,
+		provideModelRateService,
+		provideModelRateServices,
 		provideGiftCreditUsageBillingRepository,
 		provideGiftCreditWiring,
 		provideInvoiceBundle,
@@ -81,6 +84,27 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 		wire.Struct(new(Application), "Server", "PromptAudit", "PluginManager", "Cleanup"),
 	)
 	return nil, nil
+}
+
+// provideModelRateBundle binds the main repository contract to the narrower
+// custom runtime reader interface explicitly for Wire.
+func provideModelRateBundle(db *sql.DB, userRateRepo service.UserGroupRateRepository) (*custommodelrateruntime.Bundle, error) {
+	return custommodelrateruntime.ProvideBundle(db, userRateRepo)
+}
+
+// provideModelRateService exposes the service held by the custom runtime
+// bundle and fails startup when the required dependency was not constructed.
+func provideModelRateService(bundle *custommodelrateruntime.Bundle) (*custommodelrateservice.Service, error) {
+	if bundle == nil || bundle.Service == nil {
+		return nil, fmt.Errorf("model rate multiplier service is required")
+	}
+	return bundle.Service, nil
+}
+
+// provideModelRateServices adapts the required production service to legacy
+// variadic constructors without making the dependency optional at runtime.
+func provideModelRateServices(modelRateService *custommodelrateservice.Service) []*custommodelrateservice.Service {
+	return []*custommodelrateservice.Service{modelRateService}
 }
 
 func provideInvoiceBundle(db *sql.DB, cfg *config.Config, emailService *service.EmailService) (*custominvoice.Bundle, error) {

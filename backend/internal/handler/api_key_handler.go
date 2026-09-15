@@ -36,6 +36,12 @@ func NewAPIKeyHandler(apiKeyService *service.APIKeyService, modelRateServices ..
 	return h
 }
 
+// ProvideAPIKeyHandler wires the required production model-rate dependency
+// explicitly because Wire cannot resolve variadic constructor parameters.
+func ProvideAPIKeyHandler(apiKeyService *service.APIKeyService, modelRateService *modelratemultiplier.Service) *APIKeyHandler {
+	return NewAPIKeyHandler(apiKeyService, modelRateService)
+}
+
 // CreateAPIKeyRequest represents the create API key request payload
 type CreateAPIKeyRequest struct {
 	Name          string   `json:"name" binding:"required"`
