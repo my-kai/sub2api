@@ -16,6 +16,7 @@ import { customInvoiceRouteRecords } from '@/custom/invoice/routes'
 import { getInvoiceAccess } from '@/custom/invoice/api'
 import { customOAuthAppRouteRecords, isCustomOAuthAuthorizeRoute } from '@/custom/oauthapp/routes'
 import { promptAuditV2RouteRecords } from '@/custom/prompt-audit-v2/routes'
+import { turnLogRouteRecords } from '@/custom/turnlog/routes'
 import { resolveAuthReturnPath } from '@/custom/oauthapp/authReturn'
 import { resolveCompletedSetupRedirectPath } from './setupRedirect'
 import { resolveRouteDocumentTitle } from './title'
@@ -418,6 +419,7 @@ const routes: RouteRecordRaw[] = [
   ...customInvoiceRouteRecords,
   // ==================== Custom Prompt Audit 2 Routes ====================
   ...promptAuditV2RouteRecords,
+  ...turnLogRouteRecords,
 
   {
     path: '/custom/:id',

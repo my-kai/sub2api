@@ -7,6 +7,7 @@ import settings from './settings'
 import audit from './audit'
 import promptAudit from './promptAudit'
 import promptAuditV2 from './promptAuditV2'
+import turnLog from './turnLog'
 import plugins from './plugins'
 
 export default {
@@ -19,5 +20,6 @@ export default {
   ...audit,
   ...promptAudit,
   ...promptAuditV2,
+  ...turnLog,
   ...plugins,
 }

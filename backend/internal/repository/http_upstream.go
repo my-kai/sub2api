@@ -159,11 +159,31 @@ type openAIHTTP2FallbackState struct {
 // 7. 代理变更时清空旧连接池，避免复用错误代理
 // 8. 账号并发数与连接池上限对应（账号隔离策略下）
 type httpUpstreamService struct {
-	cfg     *config.Config                  // 全局配置
-	mu      sync.RWMutex                    // 保护 clients map 的读写锁
-	clients map[string]*upstreamClientEntry // 客户端缓存池，key 由隔离策略决定
+	cfg        *config.Config                  // 全局配置
+	mu         sync.RWMutex                    // 保护 clients map 的读写锁
+	clients    map[string]*upstreamClientEntry // 客户端缓存池，key 由隔离策略决定
+	observerMu sync.RWMutex                    // protects the optional diagnostic observer
+	observer   service.HTTPUpstreamObserver    // optional response observer
 	// OpenAI 走 HTTP/HTTPS 代理时的 H2->H1 回退状态（key=标准化 proxyKey）
 	openAIHTTP2Fallbacks sync.Map
+}
+
+// SetHTTPUpstreamObserver installs the optional diagnostic observer after DI construction.
+// The observer is intentionally a narrow hook so custom logging does not alter transport behavior.
+func (s *httpUpstreamService) SetHTTPUpstreamObserver(observer service.HTTPUpstreamObserver) {
+	s.observerMu.Lock()
+	s.observer = observer
+	s.observerMu.Unlock()
+}
+
+func (s *httpUpstreamService) observeResponse(req *http.Request, accountID int64, resp *http.Response) *http.Response {
+	s.observerMu.RLock()
+	observer := s.observer
+	s.observerMu.RUnlock()
+	if observer == nil {
+		return resp
+	}
+	return observer.ObserveHTTPResponse(req, accountID, resp)
 }
 
 // NewHTTPUpstream 创建通用 HTTP 上游服务
@@ -228,6 +248,7 @@ func (s *httpUpstreamService) Do(req *http.Request, proxyURL string, accountID i
 
 	// 如果上游返回了压缩内容，解压后再交给业务层
 	decompressResponseBody(resp)
+	resp = s.observeResponse(req, accountID, resp)
 
 	// 包装响应体，在关闭时自动减少计数并更新时间戳
 	// 这确保了流式响应（如 SSE）在完全读取前不会被淘汰
@@ -289,6 +310,7 @@ func (s *httpUpstreamService) DoWithTLS(req *http.Request, proxyURL string, acco
 	}
 
 	decompressResponseBody(resp)
+	resp = s.observeResponse(req, accountID, resp)
 
 	resp.Body = wrapTrackedBody(resp.Body, func() {
 		atomic.AddInt64(&entry.inFlight, -1)

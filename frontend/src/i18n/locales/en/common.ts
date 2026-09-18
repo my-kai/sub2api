@@ -218,6 +218,7 @@ export default {
     promptAudit: 'Prompt Audit',
     promptAuditV2: 'Prompt Audit 2',
     auditLogs: 'Audit Logs',
+    turnLog: 'Turn Records',
   },
 
   // Auth

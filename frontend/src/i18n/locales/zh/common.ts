@@ -218,6 +218,7 @@ export default {
     promptAudit: '提示词审计',
     promptAuditV2: '提示词审计2',
     auditLogs: '操作日志',
+    turnLog: 'turn记录',
   },
 
   // Auth
