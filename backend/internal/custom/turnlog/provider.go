@@ -26,15 +26,15 @@ type Bundle struct {
 	Handler *Handler
 }
 
-// Close stops the background writer before process resources are released.
+// Close stops the retention worker before process resources are released.
 func (b *Bundle) Close() {
 	if b != nil && b.Service != nil {
 		b.Service.Close()
 	}
 }
 
-// ProvideBundle applies the isolated schema and starts the asynchronous writer.
-func ProvideBundle(db *sql.DB, accountRepo service.AccountRepository) (*Bundle, error) {
+// ProvideBundle applies the isolated schema and starts retention cleanup.
+func ProvideBundle(db *sql.DB, accountRepo service.AccountRepository, gateway *service.OpenAIGatewayService, proxyRepo service.ProxyRepository) (*Bundle, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	if err := applyMigrations(ctx, db, turnlogmigrations.FS); err != nil {
@@ -44,23 +44,15 @@ func ProvideBundle(db *sql.DB, accountRepo service.AccountRepository) (*Bundle, 
 	if err != nil {
 		return nil, err
 	}
-	runtime, err := NewService(store, accountRepo)
+	runtime, err := NewService(store, accountRepo, gateway, proxyRepo)
 	if err != nil {
 		return nil, err
 	}
 	return &Bundle{Service: runtime, Handler: NewHandler(runtime)}, nil
 }
 
-// ProvideHTTPObserver exposes the runtime through the service-layer observer contract.
-func ProvideHTTPObserver(bundle *Bundle) service.HTTPUpstreamObserver {
-	if bundle == nil {
-		return nil
-	}
-	return bundle.Service
-}
-
 // ProviderSet binds custom turn-log dependencies for Wire.
-var ProviderSet = wire.NewSet(ProvideBundle, ProvideHTTPObserver)
+var ProviderSet = wire.NewSet(ProvideBundle)
 
 func applyMigrations(ctx context.Context, db *sql.DB, source fs.FS) error {
 	if db == nil || source == nil {

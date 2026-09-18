@@ -23,3 +23,25 @@ export interface TurnLogConfig {
   updated_at: string
   updated_by?: number
 }
+
+export interface TurnLogOAuthAccount {
+  id: number
+  name: string
+  proxies: TurnLogCaptureProxy[]
+}
+
+export interface TurnLogCaptureProxy {
+  id: number
+  name: string
+  host: string
+  port: number
+  protocol: string
+}
+
+export interface TurnLogCaptureResult {
+  status_code: number
+  response_headers: Record<string, string[]>
+  response_body: string
+  headers_truncated: boolean
+  body_truncated: boolean
+}

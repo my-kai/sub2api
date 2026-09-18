@@ -2,6 +2,9 @@ package turnlog
 
 import (
 	"database/sql"
+	"errors"
+	"log/slog"
+	"net/http"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
@@ -14,6 +17,40 @@ type Handler struct{ service *Service }
 
 // NewHandler creates the administrator HTTP adapter.
 func NewHandler(runtime *Service) *Handler { return &Handler{service: runtime} }
+
+// OAuthAccounts lists selectable OpenAI OAuth accounts without credentials.
+func (h *Handler) OAuthAccounts(c *gin.Context) {
+	accounts, err := h.service.OAuthAccounts(c.Request.Context())
+	if err != nil {
+		response.InternalError(c, "OpenAI OAuth账号查询失败")
+		return
+	}
+	response.Success(c, accounts)
+}
+
+// Capture sends one manual diagnostic request and returns the raw upstream reply.
+func (h *Handler) Capture(c *gin.Context) {
+	var request struct {
+		AccountID int64  `json:"account_id"`
+		Model     string `json:"model"`
+		ProxyID   *int64 `json:"proxy_id"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		response.BadRequest(c, "捕捉请求无效")
+		return
+	}
+	result, err := h.service.Capture(c.Request.Context(), c, request.AccountID, request.Model, request.ProxyID)
+	if err != nil {
+		if errors.Is(err, ErrInvalidCaptureRequest) {
+			response.BadRequest(c, "捕捉参数无效")
+			return
+		}
+		slog.Error("turn_log_manual_capture_failed", "account_id", request.AccountID, "model", request.Model, "proxy_id", request.ProxyID, "error", err)
+		response.Error(c, http.StatusBadGateway, "OpenAI OAuth上游请求失败")
+		return
+	}
+	response.Success(c, result)
+}
 
 // List returns paginated diagnostic rows.
 func (h *Handler) List(c *gin.Context) {

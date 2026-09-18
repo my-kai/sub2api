@@ -1,6 +1,14 @@
 <template>
   <AppLayout>
     <TablePageLayout>
+      <template #actions>
+        <div class="flex justify-end">
+          <button type="button" class="btn btn-primary" @click="openCapture">
+            <Icon name="plus" size="sm" />
+            {{ t('admin.turnLog.capture.open') }}
+          </button>
+        </div>
+      </template>
       <template #filters>
         <div class="card p-4 sm:p-6">
           <div class="flex flex-wrap items-end gap-4">
@@ -74,6 +82,36 @@
         <p v-if="detail.headers_truncated || detail.body_truncated || !detail.body_complete" class="text-xs text-amber-600 dark:text-amber-400">{{ t('admin.turnLog.detail.truncatedHint') }}</p>
       </div>
     </BaseDialog>
+
+    <BaseDialog :show="captureVisible" :title="t('admin.turnLog.capture.title')" width="extra-wide" :close-on-escape="!captureLoading" :show-close-button="!captureLoading" @close="closeCapture">
+      <form id="turn-log-capture-form" class="space-y-5" @submit.prevent="submitCapture">
+        <div class="grid gap-4 sm:grid-cols-2">
+          <div>
+            <label class="input-label mb-1.5 block">{{ t('admin.turnLog.capture.account') }}</label>
+            <Select v-model="captureAccountID" :options="captureAccountOptions" :loading="captureAccountsLoading" :placeholder="t('admin.turnLog.capture.accountPlaceholder')" :disabled="captureLoading" :searchable="'auto'" :aria-label="t('admin.turnLog.capture.account')" @change="onCaptureAccountChange" />
+          </div>
+          <Input v-model="captureModel" :label="t('admin.turnLog.capture.model')" :disabled="captureLoading" required />
+        </div>
+        <div>
+          <label class="input-label mb-1.5 block">{{ t('admin.turnLog.capture.ip') }}</label>
+          <Select v-model="captureProxyID" :options="captureProxyOptions" :disabled="captureLoading || !captureAccountID" :aria-label="t('admin.turnLog.capture.ip')" />
+        </div>
+        <p v-if="captureError" role="alert" class="border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">{{ captureError }}</p>
+        <section v-if="captureResult" class="space-y-4 border border-gray-200 p-4 dark:border-dark-700">
+          <div class="flex items-center gap-3"><span class="text-xs text-gray-500">{{ t('admin.turnLog.capture.status') }}</span><span class="font-mono font-semibold">{{ captureResult.status_code }}</span></div>
+          <div><h4 class="mb-1.5 text-xs font-bold uppercase tracking-wider text-gray-400">{{ t('admin.turnLog.detail.headers') }}</h4><pre class="max-h-72 overflow-auto rounded-xl bg-gray-50 p-4 font-mono text-xs leading-relaxed dark:bg-dark-900">{{ JSON.stringify(captureResult.response_headers, null, 2) }}</pre></div>
+          <div><h4 class="mb-1.5 text-xs font-bold uppercase tracking-wider text-gray-400">{{ t('admin.turnLog.detail.body') }}</h4><pre class="max-h-[30rem] overflow-auto rounded-xl bg-gray-50 p-4 font-mono text-xs leading-relaxed dark:bg-dark-900">{{ captureResult.response_body || '—' }}</pre></div>
+          <p v-if="captureResult.headers_truncated || captureResult.body_truncated" class="text-xs text-amber-600 dark:text-amber-400">{{ t('admin.turnLog.capture.truncated') }}</p>
+        </section>
+      </form>
+      <template #footer>
+        <button type="button" class="btn btn-secondary" :disabled="captureLoading" @click="closeCapture">{{ t('common.cancel') }}</button>
+        <button type="submit" form="turn-log-capture-form" class="btn btn-primary" :disabled="!captureAccountID || !captureModel.trim() || captureLoading">
+          <Icon name="play" size="sm" :class="{ 'animate-pulse': captureLoading }" />
+          {{ captureLoading ? t('admin.turnLog.capture.loading') : t('admin.turnLog.capture.submit') }}
+        </button>
+      </template>
+    </BaseDialog>
   </AppLayout>
 </template>
 
@@ -85,11 +123,12 @@ import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 import DataTable from '@/components/common/DataTable.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import Select from '@/components/common/Select.vue'
+import Input from '@/components/common/Input.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
 import type { Column } from '@/components/common/types'
-import { getTurnLog, getTurnLogConfig, listTurnLogs, updateTurnLogConfig } from '../api'
-import type { TurnLog } from '../types'
+import { captureTurnState, getTurnLog, getTurnLogConfig, listTurnLogOAuthAccounts, listTurnLogs, updateTurnLogConfig } from '../api'
+import type { TurnLog, TurnLogCaptureResult, TurnLogOAuthAccount } from '../types'
 
 const { t } = useI18n()
 const loading = ref(false)
@@ -103,6 +142,15 @@ const filters = reactive({ account_id: '', status_code: '' })
 const detailVisible = ref(false)
 const detailLoading = ref(false)
 const detail = ref<TurnLog | null>(null)
+const captureVisible = ref(false)
+const captureLoading = ref(false)
+const captureAccountsLoading = ref(false)
+const captureError = ref('')
+const captureAccounts = ref<TurnLogOAuthAccount[]>([])
+const captureAccountID = ref<number | null>(null)
+const captureProxyID = ref<number | null>(null)
+const captureModel = ref('gpt-6-astra')
+const captureResult = ref<TurnLogCaptureResult | null>(null)
 
 const columns = computed<Column[]>(() => [
   { key: 'created_at', label: t('admin.turnLog.columns.time') },
@@ -116,6 +164,14 @@ const statusOptions = computed(() => [
   { value: '', label: t('common.all') },
   { value: '217', label: '217' },
   { value: '292', label: '292' },
+])
+
+const captureAccountOptions = computed(() => captureAccounts.value.map(account => ({ value: account.id, label: account.name || `#${account.id}` })))
+const selectedCaptureAccount = computed(() => captureAccounts.value.find(account => account.id === captureAccountID.value))
+const captureProxyOptions = computed(() => [
+  { value: null, label: t('admin.turnLog.capture.accountDefaultIp') },
+  { value: 0, label: t('admin.turnLog.capture.directIp') },
+  ...(selectedCaptureAccount.value?.proxies ?? []).map(proxy => ({ value: proxy.id, label: `${proxy.name || proxy.host} (${proxy.host}:${proxy.port})` })),
 ])
 
 async function load() {
@@ -151,6 +207,47 @@ async function openDetail(id: number) {
   detailVisible.value = true
   detailLoading.value = true
   try { detail.value = await getTurnLog(id) } finally { detailLoading.value = false }
+}
+
+async function openCapture() {
+  captureVisible.value = true
+  captureError.value = ''
+  captureResult.value = null
+  captureModel.value = 'gpt-6-astra'
+  captureAccountID.value = null
+  captureProxyID.value = null
+  captureAccountsLoading.value = true
+  try {
+    captureAccounts.value = await listTurnLogOAuthAccounts()
+  } catch {
+    captureError.value = t('admin.turnLog.capture.loadAccountsFailed')
+  } finally {
+    captureAccountsLoading.value = false
+  }
+}
+
+function onCaptureAccountChange() {
+  captureProxyID.value = null
+  captureResult.value = null
+  captureError.value = ''
+}
+
+async function submitCapture() {
+  if (!captureAccountID.value || !captureModel.value.trim()) return
+  captureLoading.value = true
+  captureError.value = ''
+  captureResult.value = null
+  try {
+    captureResult.value = await captureTurnState(captureAccountID.value, captureModel.value.trim(), captureProxyID.value)
+  } catch {
+    captureError.value = t('admin.turnLog.capture.failed')
+  } finally {
+    captureLoading.value = false
+  }
+}
+
+function closeCapture() {
+  if (!captureLoading.value) captureVisible.value = false
 }
 
 function formatTime(value: string) { return new Date(value).toLocaleString() }

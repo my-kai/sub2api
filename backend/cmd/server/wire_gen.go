@@ -381,18 +381,13 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	if err != nil {
 		return nil, err
 	}
-	turnlogBundle, err := turnlog.ProvideBundle(db, accountRepository)
+	turnlogBundle, err := turnlog.ProvideBundle(db, accountRepository, openAIGatewayService, proxyRepository)
 	if err != nil {
 		return nil, err
 	}
 	engine := server.ProvideRouter(configConfig, handlers, jwtAuthMiddleware, optionalJWTAuthMiddleware, adminAuthMiddleware, apiKeyAuthMiddleware, auditLogMiddleware, stepUpAuthMiddleware, apiKeyService, subscriptionService, opsService, settingService, compositeRouteResolver, redisClient, aigatewayadmintransferBundle, bundle2, callbackauthBundle, invoiceBundle, oauthappBundle, promptauditv2Bundle, turnlogBundle)
 	httpServer := server.ProvideHTTPServer(configConfig, engine)
 	mainGiftCreditWiring, err := provideGiftCreditWiring(runtimeBundle, billingCacheService, apiKeyService, userService, adminService)
-	if err != nil {
-		return nil, err
-	}
-	httpUpstreamObserver := turnlog.ProvideHTTPObserver(turnlogBundle)
-	mainTurnLogWiring, err := provideTurnLogWiring(httpUpstream, httpUpstreamObserver)
 	if err != nil {
 		return nil, err
 	}
@@ -414,7 +409,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	channelMonitorRunner := service.ProvideChannelMonitorRunner(channelMonitorService, settingService, channelMonitorQuotaFetcher)
 	channelMonitorV2Aggregator := service.ProvideChannelMonitorV2Aggregator(channelMonitorV2Repository, db, settingService)
 	userPlatformQuotaUsageFlusher := service.ProvideUserPlatformQuotaUsageFlusher(configConfig, billingCache, serviceUserPlatformQuotaRepository, timingWheelService)
-	v2 := provideCleanup(client, redisClient, mainGiftCreditWiring, mainTurnLogWiring, opsMetricsCollector, opsAggregationService, opsAlertEvaluatorService, opsCleanupService, opsScheduledReportService, opsSystemLogSink, opsService, opsIngressRejectAggregator, apiKeyService, authCacheInvalidationWorker, schedulerSnapshotService, tokenRefreshService, accountExpiryService, cnProviderBalanceCheckService, openAICodexVersionSyncService, proxyExpiryService, subscriptionExpiryService, usageCleanupService, idempotencyCleanupService, batchImageCleanupService, batchImageWorkerRuntime, pricingService, emailQueueService, billingCacheService, usageRecordWorkerPool, subscriptionService, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, grokOAuthService, openAIGatewayService, scheduledTestRunnerService, backupService, paymentOrderExpiryService, channelMonitorRunner, channelMonitorV2Aggregator, userPlatformQuotaUsageFlusher, upstreamBillingProbeService, ollamaCloudUsageService, auditLogService, openAIQuotaAutoResetService, promptService, promptauditv2Bundle, turnlogBundle, pluginManager)
+	v2 := provideCleanup(client, redisClient, mainGiftCreditWiring, opsMetricsCollector, opsAggregationService, opsAlertEvaluatorService, opsCleanupService, opsScheduledReportService, opsSystemLogSink, opsService, opsIngressRejectAggregator, apiKeyService, authCacheInvalidationWorker, schedulerSnapshotService, tokenRefreshService, accountExpiryService, cnProviderBalanceCheckService, openAICodexVersionSyncService, proxyExpiryService, subscriptionExpiryService, usageCleanupService, idempotencyCleanupService, batchImageCleanupService, batchImageWorkerRuntime, pricingService, emailQueueService, billingCacheService, usageRecordWorkerPool, subscriptionService, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, grokOAuthService, openAIGatewayService, scheduledTestRunnerService, backupService, paymentOrderExpiryService, channelMonitorRunner, channelMonitorV2Aggregator, userPlatformQuotaUsageFlusher, upstreamBillingProbeService, ollamaCloudUsageService, auditLogService, openAIQuotaAutoResetService, promptService, promptauditv2Bundle, turnlogBundle, pluginManager)
 	application := &Application{
 		Server:        httpServer,
 		PromptAudit:   promptService,
@@ -456,18 +451,6 @@ func provideModelRateServices(modelRateService *service2.Service) []*service2.Se
 
 func provideInvoiceBundle(db *sql.DB, cfg *config.Config, emailService *service.EmailService) (*invoice.Bundle, error) {
 	return invoice.ProvideBundleWithEmail(db, cfg.Pricing.DataDir, emailService, cfg.Server.FrontendURL, cfg.JWT.Secret)
-}
-
-// turnLogWiring marks installation of the optional observer on the shared HTTP transport.
-type turnLogWiring struct{}
-
-func provideTurnLogWiring(upstream service.HTTPUpstream, observer service.HTTPUpstreamObserver) (*turnLogWiring, error) {
-	setter, ok := upstream.(service.HTTPUpstreamObserverSetter)
-	if !ok {
-		return nil, fmt.Errorf("shared HTTP upstream does not support turn log observation")
-	}
-	setter.SetHTTPUpstreamObserver(observer)
-	return &turnLogWiring{}, nil
 }
 
 // giftCreditWiring marks completion of the required cross-service gift-credit injection.
@@ -521,7 +504,6 @@ func provideCleanup(
 	entClient *ent.Client,
 	rdb *redis.Client,
 	_ *giftCreditWiring,
-	_ *turnLogWiring,
 	opsMetricsCollector *service.OpsMetricsCollector,
 	opsAggregation *service.OpsAggregationService,
 	opsAlertEvaluator *service.OpsAlertEvaluatorService,

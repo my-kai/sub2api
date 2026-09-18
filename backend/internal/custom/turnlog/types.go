@@ -9,12 +9,6 @@ const (
 	MinRetentionDays = 1
 	// MaxRetentionDays is the largest retention period accepted by the API.
 	MaxRetentionDays = 3650
-	// MaxHeadersBytes bounds serialized response headers retained per event.
-	MaxHeadersBytes int64 = 256 << 10
-	// MaxBodyBytes bounds response body bytes retained per event.
-	MaxBodyBytes int64 = 2 << 20
-	// queueCapacity prevents upstream request bursts from growing process memory without bound.
-	queueCapacity = 1024
 )
 
 // TurnLog is the administrator-visible snapshot of one matching upstream response.
@@ -54,13 +48,27 @@ type TurnLogPage struct {
 	PageSize int       `json:"page_size"`
 }
 
-// queuedEvent is internal worker input and is deliberately not exposed by the API.
-type queuedEvent struct {
-	AccountID        int64
-	StatusCode       int
-	Headers          map[string][]string
-	ResponseBody     string
-	HeadersTruncated bool
-	BodyTruncated    bool
-	BodyComplete     bool
+// OAuthAccount is the credential-free account option exposed to administrators.
+type OAuthAccount struct {
+	ID      int64          `json:"id"`
+	Name    string         `json:"name"`
+	Proxies []CaptureProxy `json:"proxies"`
+}
+
+// CaptureProxy is a selectable configured egress without proxy credentials.
+type CaptureProxy struct {
+	ID       int64  `json:"id"`
+	Name     string `json:"name"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	Protocol string `json:"protocol"`
+}
+
+// CaptureResult is the raw response returned by a manual state capture.
+type CaptureResult struct {
+	StatusCode       int                 `json:"status_code"`
+	ResponseHeaders  map[string][]string `json:"response_headers"`
+	ResponseBody     string              `json:"response_body"`
+	HeadersTruncated bool                `json:"headers_truncated"`
+	BodyTruncated    bool                `json:"body_truncated"`
 }

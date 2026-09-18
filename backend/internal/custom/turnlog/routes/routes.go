@@ -11,6 +11,8 @@ func RegisterAdminRoutes(group gin.IRouter, handler *turnlog.Handler) {
 		return
 	}
 	group.GET("/custom/turn-logs", handler.List)
+	group.GET("/custom/turn-logs/accounts", handler.OAuthAccounts)
+	group.POST("/custom/turn-logs/capture", handler.Capture)
 	group.GET("/custom/turn-logs/:id", handler.Get)
 	group.GET("/custom/turn-log-config", handler.GetConfig)
 	group.PUT("/custom/turn-log-config", handler.UpdateConfig)

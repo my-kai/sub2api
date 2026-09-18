@@ -20,24 +20,6 @@ func NewStore(db *sql.DB) (*Store, error) {
 	return &Store{db: db}, nil
 }
 
-func (s *Store) insert(ctx context.Context, event queuedEvent, accountName string) error {
-	headers, err := json.Marshal(event.Headers)
-	if err != nil {
-		return fmt.Errorf("marshal turn log headers: %w", err)
-	}
-	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO custom_turn_logs
-			(account_id, account_name, status_code, response_headers, response_body,
-			 headers_truncated, body_truncated, body_complete)
-		VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8)
-	`, event.AccountID, accountName, event.StatusCode, headers, event.ResponseBody,
-		event.HeadersTruncated, event.BodyTruncated, event.BodyComplete)
-	if err != nil {
-		return fmt.Errorf("insert turn log: %w", err)
-	}
-	return nil
-}
-
 func (s *Store) list(ctx context.Context, filter TurnLogFilter) (TurnLogPage, error) {
 	args := make([]any, 0, 4)
 	where := " WHERE TRUE"

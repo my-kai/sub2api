@@ -81,7 +81,6 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 
 		// Cleanup function provider
 		provideCleanup,
-		provideTurnLogWiring,
 
 		// Application struct
 		wire.Struct(new(Application), "Server", "PromptAudit", "PluginManager", "Cleanup"),
@@ -112,18 +111,6 @@ func provideModelRateServices(modelRateService *custommodelrateservice.Service) 
 
 func provideInvoiceBundle(db *sql.DB, cfg *config.Config, emailService *service.EmailService) (*custominvoice.Bundle, error) {
 	return custominvoice.ProvideBundleWithEmail(db, cfg.Pricing.DataDir, emailService, cfg.Server.FrontendURL, cfg.JWT.Secret)
-}
-
-// turnLogWiring marks installation of the optional observer on the shared HTTP transport.
-type turnLogWiring struct{}
-
-func provideTurnLogWiring(upstream service.HTTPUpstream, observer service.HTTPUpstreamObserver) (*turnLogWiring, error) {
-	setter, ok := upstream.(service.HTTPUpstreamObserverSetter)
-	if !ok {
-		return nil, fmt.Errorf("shared HTTP upstream does not support turn log observation")
-	}
-	setter.SetHTTPUpstreamObserver(observer)
-	return &turnLogWiring{}, nil
 }
 
 // giftCreditWiring marks completion of the required cross-service gift-credit injection.
@@ -177,7 +164,6 @@ func provideCleanup(
 	entClient *ent.Client,
 	rdb *redis.Client,
 	_ *giftCreditWiring,
-	_ *turnLogWiring,
 	opsMetricsCollector *service.OpsMetricsCollector,
 	opsAggregation *service.OpsAggregationService,
 	opsAlertEvaluator *service.OpsAlertEvaluatorService,
