@@ -32,6 +32,7 @@ func (s *GatewayService) SelectAccountForModel(ctx context.Context, groupID *int
 
 // SelectAccountForModelWithExclusions selects an account supporting the requested model while excluding specified accounts.
 func (s *GatewayService) SelectAccountForModelWithExclusions(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}) (*Account, error) {
+	ctx = withEgressStickyGroupID(ctx, groupID)
 	// 优先检查 context 中的强制平台（/antigravity 路由）
 	var platform string
 	forcePlatform, hasForcePlatform := ctx.Value(ctxkey.ForcePlatform).(string)
@@ -98,6 +99,7 @@ func (s *GatewayService) SelectAccountForModelWithExclusions(ctx context.Context
 // metadataUserID: 用于客户端亲和调度，从中提取客户端 ID
 // sub2apiUserID: 系统用户 ID，用于二维亲和调度
 func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, metadataUserID string, sub2apiUserID int64) (*AccountSelectionResult, error) {
+	ctx = withEgressStickyGroupID(ctx, groupID)
 	// 调试日志：记录调度入口参数
 	excludedIDsList := make([]int64, 0, len(excludedIDs))
 	for id := range excludedIDs {
@@ -117,6 +119,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 		return nil, err
 	}
 	ctx = s.withGroupContext(ctx, group)
+	ctx = withEgressStickyGroupID(ctx, groupID)
 	ctx = s.withGatewayProfitControlGate(ctx, groupID)
 
 	// Claude Code 限制可能已将 groupID 解析为 fallback group，
@@ -175,6 +178,9 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			}
 
 			account, result, err := s.prepareAccountSlot(ctx, account)
+			if err != nil {
+				return nil, err
+			}
 			if err == nil && result.Acquired {
 				// 获取槽位后检查会话限制（使用 sessionHash 作为会话标识符）
 				if !s.checkAndRegisterSession(ctx, account, sessionHash) {
@@ -371,6 +377,9 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 
 						if rpmPass { // 粘性会话窗口费用+RPM 检查
 							stickyAccount, result, err := s.prepareAccountSlot(ctx, stickyAccount)
+							if err != nil {
+								return nil, err
+							}
 							if err == nil && result.Acquired {
 								// 会话数量限制检查
 								if !s.checkAndRegisterSession(ctx, stickyAccount, sessionHash) {
@@ -487,6 +496,9 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 				// 4. 尝试获取槽位
 				for _, item := range routingAvailable {
 					boundAccount, result, err := s.prepareAccountSlot(ctx, item.account)
+					if err != nil {
+						return nil, err
+					}
 					item.account = boundAccount
 					if err == nil && result.Acquired {
 						// 会话数量限制检查
@@ -576,6 +588,9 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 
 				if !clearSticky && platformOK && profitOK && modelSupported && channelOK && modelSchedulable && quotaOK && windowCostOK && rpmOK && schedulable {
 					boundAccount, result, err := s.prepareAccountSlot(ctx, account)
+					if err != nil {
+						return nil, err
+					}
 					account = boundAccount
 					if err == nil && result.Acquired {
 						// 会话数量限制检查
@@ -764,6 +779,9 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			}
 
 			boundAccount, result, err := s.prepareAccountSlot(ctx, selected.account)
+			if err != nil {
+				return nil, err
+			}
 			selected.account = boundAccount
 			if err == nil && result.Acquired {
 				// 会话数量限制检查
@@ -796,9 +814,12 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 		if !s.checkAndRegisterSession(ctx, acc, sessionHash) {
 			continue // 会话限制已满，尝试下一个账号
 		}
-		bound := acc
-		if acc.HasConfiguredEgress() {
-			bound = acc.SelectEgressForRequest()
+		bound, egressKey, stickyHit, err := resolveEgressStickySelection(ctx, s.cache, acc)
+		if err != nil {
+			return nil, err
+		}
+		if err := persistEgressStickySelection(ctx, s.cache, bound.ID, egressKey, stickyHit); err != nil {
+			return nil, err
 		}
 		return s.newSelectionResult(ctx, bound, false, nil, &AccountWaitPlan{
 			AccountID:      acc.ID,
@@ -818,6 +839,9 @@ func (s *GatewayService) tryAcquireByLegacyOrder(ctx context.Context, candidates
 
 	for _, acc := range ordered {
 		acc, result, err := s.prepareAccountSlot(ctx, acc)
+		if err != nil {
+			return nil, false, err
+		}
 		if err == nil && result.Acquired {
 			// 会话数量限制检查
 			if !s.checkAndRegisterSession(ctx, acc, sessionHash) {
@@ -1224,13 +1248,26 @@ func (s *GatewayService) prepareAccountSlot(ctx context.Context, account *Accoun
 	if account == nil {
 		return nil, nil, fmt.Errorf("account is required")
 	}
-	if account != nil && account.HasConfiguredEgress() {
-		bound := account.SelectEgressForRequest()
-		result, err := s.tryAcquireAccountEgressSlot(ctx, bound)
+	bound, egressKey, stickyHit, err := resolveEgressStickySelection(ctx, s.cache, account)
+	if err != nil {
+		return account, nil, err
+	}
+	var result *AcquireResult
+	if account.HasConfiguredEgress() {
+		result, err = s.tryAcquireAccountEgressSlot(ctx, bound)
+	} else {
+		result, err = s.tryAcquireAccountSlot(ctx, account.ID, account.Concurrency)
+	}
+	if err != nil || result == nil {
 		return bound, result, err
 	}
-	result, err := s.tryAcquireAccountSlot(ctx, account.ID, account.Concurrency)
-	return account, result, err
+	if err := persistEgressStickySelection(ctx, s.cache, bound.ID, egressKey, stickyHit); err != nil {
+		if result.ReleaseFunc != nil {
+			result.ReleaseFunc()
+		}
+		return bound, nil, err
+	}
+	return bound, result, nil
 }
 
 type usageLogWindowStatsBatchProvider interface {

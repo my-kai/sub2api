@@ -1192,9 +1192,9 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrderWithBudget
 			continue
 		}
 
-		boundCandidate := candidate.account
-		if boundCandidate.HasConfiguredEgress() {
-			boundCandidate = boundCandidate.SelectEgressForRequest()
+		boundCandidate, egressKey, stickyHit, resolveErr := resolveEgressStickySelection(ctx, s.service.cache, candidate.account)
+		if resolveErr != nil {
+			return nil, compactBlocked, resolveErr
 		}
 		result, attempted, acquireErr := s.tryAcquireOpenAIAccountSlotForAccount(ctx, boundCandidate, budget)
 		if !attempted {
@@ -1233,7 +1233,11 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrderWithBudget
 			release(result)
 			boundFresh := fresh
 			if boundFresh.HasConfiguredEgress() {
-				boundFresh = boundFresh.SelectEgressForRequest()
+				var resolveErr error
+				boundFresh, egressKey, stickyHit, resolveErr = resolveEgressStickySelection(ctx, s.service.cache, boundFresh)
+				if resolveErr != nil {
+					return nil, compactBlocked, resolveErr
+				}
 			}
 			result, attempted, acquireErr = s.tryAcquireOpenAIAccountSlotForAccount(ctx, boundFresh, budget)
 			fresh = boundFresh
@@ -1249,6 +1253,10 @@ func (s *defaultOpenAIAccountScheduler) tryAcquireOpenAISelectionOrderWithBudget
 		}
 		if req.SessionHash != "" && !req.PreserveStickyBinding {
 			_ = s.service.bindOpenAIStickySessionDuringSelection(ctx, req.GroupID, req.SessionHash, fresh.ID)
+		}
+		if err := persistEgressStickySelection(ctx, s.service.cache, fresh.ID, egressKey, stickyHit); err != nil {
+			release(result)
+			return nil, compactBlocked, err
 		}
 		return attachSelectionProfitGate(ctx, &AccountSelectionResult{
 			Account:     fresh,
@@ -1354,14 +1362,27 @@ func (s *defaultOpenAIAccountScheduler) tryFallbackToWeightedSticky(
 		}
 		var result *AcquireResult
 		var acquireErr error
+		var egressKey string
+		var stickyHit bool
 		if account.HasConfiguredEgress() {
-			account = account.SelectEgressForRequest()
+			var resolveErr error
+			account, egressKey, stickyHit, resolveErr = resolveEgressStickySelection(ctx, s.service.cache, account)
+			if resolveErr != nil {
+				return nil, resolveErr
+			}
 			result, acquireErr = s.service.tryAcquireAccountEgressSlot(ctx, account)
 		} else {
+			egressKey = "local"
 			result, acquireErr = s.service.tryAcquireAccountSlot(ctx, account.ID, account.Concurrency)
 		}
 		if acquireErr != nil {
 			return nil, acquireErr
+		}
+		if err := persistEgressStickySelection(ctx, s.service.cache, account.ID, egressKey, stickyHit); err != nil {
+			if result != nil && result.ReleaseFunc != nil {
+				result.ReleaseFunc()
+			}
+			return nil, err
 		}
 		if result != nil && result.Acquired {
 			if req.SessionHash != "" && !req.PreserveStickyBinding {
@@ -2279,6 +2300,7 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 	previousResponseCanMove bool,
 	useUpstreamTokenCost bool,
 ) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
+	ctx = withEgressStickyGroupID(ctx, groupID)
 	ctx = s.withOpenAIQuotaAutoPauseContext(ctx)
 	ctx = s.withOpenAIGroupPrivacyRequirement(ctx, groupID)
 	// 分组利润控制：唯一文本调度入口的防御性装门。handler 文本

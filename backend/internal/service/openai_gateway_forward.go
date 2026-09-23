@@ -19,7 +19,10 @@ import (
 
 // Forward forwards request to OpenAI API
 func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (result *OpenAIForwardResult, err error) {
-	account = account.SelectEgressForRequest()
+	account, err = prepareEgressForForward(ctx, s.cache, account)
+	if err != nil {
+		return nil, err
+	}
 	defer func() {
 		if result != nil && account != nil {
 			result.EgressHost = account.SelectedEgressHost

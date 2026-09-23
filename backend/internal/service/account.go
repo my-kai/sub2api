@@ -104,7 +104,15 @@ func (a *Account) SelectEgressForRequest() *Account {
 	if a == nil {
 		return nil
 	}
+	if strings.TrimSpace(a.SelectedEgressKey) != "" {
+		// A scheduler-selected exit owns the concurrency slot for this request.
+		// Never silently rotate to another exit during forwarding.
+		return a.selectEgressByKey(a.SelectedEgressKey)
+	}
 	proxy, host := a.NextEgressProxy()
+	if a.HasConfiguredEgress() && host == "" {
+		return nil
+	}
 	clone := *a
 	clone.Proxy = proxy
 	clone.SelectedEgressHost = host
@@ -117,6 +125,44 @@ func (a *Account) SelectEgressForRequest() *Account {
 		clone.SelectedEgressKey = "proxy:" + strconv.FormatInt(id, 10)
 	}
 	return &clone
+}
+
+// selectEgressByKey validates and clones a request-scoped exit identity. It
+// rejects disabled, expired, or removed proxies so cached bindings cannot route
+// through stale configuration.
+func (a *Account) selectEgressByKey(key string) *Account {
+	if a == nil {
+		return nil
+	}
+	key = strings.TrimSpace(key)
+	if key == "local" {
+		if a.HasConfiguredEgress() && !a.EgressIncludeLocal {
+			return nil
+		}
+		clone := *a
+		clone.Proxy = nil
+		clone.ProxyID = nil
+		clone.SelectedEgressKey = "local"
+		clone.SelectedEgressHost = "local"
+		return &clone
+	}
+	id, ok := selectedEgressProxyID(key)
+	if !ok {
+		return nil
+	}
+	now := time.Now()
+	for _, proxy := range a.EgressProxies {
+		if proxy == nil || proxy.ID != id || !proxy.IsActive() || proxy.IsExpired(now) {
+			continue
+		}
+		clone := *a
+		clone.Proxy = proxy
+		clone.ProxyID = &id
+		clone.SelectedEgressKey = key
+		clone.SelectedEgressHost = proxy.Host
+		return &clone
+	}
+	return nil
 }
 
 // HasConfiguredEgress reports whether the account has the normalized exit pool
@@ -136,7 +182,16 @@ func (a *Account) NextEgressProxy() (*Proxy, string) {
 	if a.EgressIncludeLocal {
 		exits = append(exits, nil)
 	}
-	exits = append(exits, a.EgressProxies...)
+	now := time.Now()
+	for _, proxy := range a.EgressProxies {
+		// A stale account snapshot may outlive a proxy status/expiry change. Do
+		// not let that snapshot route a request through an invalid exit; when no
+		// valid exit remains, the caller will fail the selection explicitly.
+		if proxy == nil || !proxy.IsActive() || proxy.IsExpired(now) {
+			continue
+		}
+		exits = append(exits, proxy)
+	}
 	if len(exits) == 0 {
 		return nil, ""
 	}

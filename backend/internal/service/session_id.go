@@ -1,11 +1,70 @@
 package service
 
 import (
+	"context"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 )
+
+// explicitSessionIDContextKey carries only a client-provided session identity.
+// It is deliberately separate from the broader account-sticky hash so content
+// fallbacks can never create a new egress-sticky binding.
+type explicitSessionIDContextKey struct{}
+
+var explicitSessionIDKey = explicitSessionIDContextKey{}
+
+// WithExplicitSessionID attaches a sanitized client session identifier to the
+// request context. Empty or invalid values remove the egress-sticky signal.
+func WithExplicitSessionID(ctx context.Context, sessionID string) context.Context {
+	if ctx == nil {
+		return nil
+	}
+	return context.WithValue(ctx, explicitSessionIDKey, sanitizeSessionID(sessionID))
+}
+
+// ExplicitSessionIDFromContext returns the explicit client session identifier,
+// excluding all content-derived and other account-sticky fallbacks.
+func ExplicitSessionIDFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	sessionID, _ := ctx.Value(explicitSessionIDKey).(string)
+	return sanitizeSessionID(sessionID)
+}
+
+// AttachExplicitSessionIDToGin stores the explicit session signal on the Gin
+// request context while preserving all existing request-scoped values.
+func AttachExplicitSessionIDToGin(c *gin.Context, sessionID string) {
+	if c == nil || c.Request == nil {
+		return
+	}
+	c.Request = c.Request.WithContext(WithExplicitSessionID(c.Request.Context(), sessionID))
+}
+
+// ExplicitSessionIDFromParsedRequest extracts only the metadata session ID that
+// is explicitly supplied by a generic gateway client. Content summaries remain
+// available to GenerateSessionHash for the existing account sticky path only.
+func ExplicitSessionIDFromParsedRequest(parsed *ParsedRequest) string {
+	if parsed == nil || strings.TrimSpace(parsed.MetadataUserID) == "" {
+		return ""
+	}
+	uid := ParseMetadataUserID(parsed.MetadataUserID)
+	if uid == nil {
+		return ""
+	}
+	return sanitizeSessionID(uid.SessionID)
+}
+
+// ExplicitGatewaySessionID combines the generic gateway metadata session with
+// an explicit protocol header. It never consults content-derived hashes.
+func ExplicitGatewaySessionID(c *gin.Context, parsed *ParsedRequest) string {
+	if sessionID := ExplicitSessionIDFromParsedRequest(parsed); sessionID != "" {
+		return sessionID
+	}
+	return ExtractClientSessionID(c)
+}
 
 // maxPersistedSessionIDLength bounds the persisted client session identifier to the
 // usage_logs.session_id column width (VARCHAR(255)). Longer values are rejected so

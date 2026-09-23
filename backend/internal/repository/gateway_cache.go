@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -15,6 +16,7 @@ import (
 )
 
 const stickySessionPrefix = "sticky_session:"
+const stickySessionEgressPrefix = "sticky_session_egress:"
 const openAIResponsesSessionWindowPrefix = "openai_responses_session_window:"
 const liveCallPrefix = "live:call:"
 
@@ -26,10 +28,57 @@ func NewGatewayCache(rdb *redis.Client) service.GatewayCache {
 	return &gatewayCache{rdb: rdb}
 }
 
+var _ service.EgressStickyCache = (*gatewayCache)(nil)
+
 // buildSessionKey 构建 session key，包含 groupID 实现分组隔离
 // 格式: sticky_session:{groupID}:{sessionHash}
 func buildSessionKey(groupID int64, sessionHash string) string {
 	return fmt.Sprintf("%s%d:%s", stickySessionPrefix, groupID, sessionHash)
+}
+
+// buildSessionEgressKey deliberately uses a separate namespace so account
+// sticky values can never be decoded as egress bindings.
+func buildSessionEgressKey(groupID int64, sessionID string) string {
+	return fmt.Sprintf("%s%d:%s", stickySessionEgressPrefix, groupID, sessionID)
+}
+
+func (c *gatewayCache) GetSessionEgressBinding(ctx context.Context, groupID int64, sessionID string) (service.EgressStickyBinding, error) {
+	if c == nil || c.rdb == nil || strings.TrimSpace(sessionID) == "" {
+		return service.EgressStickyBinding{}, errors.New("invalid egress sticky session lookup")
+	}
+	payload, err := c.rdb.Get(ctx, buildSessionEgressKey(groupID, sessionID)).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return service.EgressStickyBinding{}, service.ErrEgressStickySessionNotFound
+	}
+	if err != nil {
+		return service.EgressStickyBinding{}, err
+	}
+	var binding service.EgressStickyBinding
+	if err := json.Unmarshal(payload, &binding); err != nil {
+		return service.EgressStickyBinding{}, fmt.Errorf("decode egress sticky binding: %w", err)
+	}
+	if binding.AccountID <= 0 || strings.TrimSpace(binding.EgressKey) == "" {
+		return service.EgressStickyBinding{}, errors.New("invalid egress sticky binding")
+	}
+	return binding, nil
+}
+
+func (c *gatewayCache) SetSessionEgressBinding(ctx context.Context, groupID int64, sessionID string, binding service.EgressStickyBinding, ttl time.Duration) error {
+	if c == nil || c.rdb == nil || strings.TrimSpace(sessionID) == "" || binding.AccountID <= 0 || strings.TrimSpace(binding.EgressKey) == "" || ttl <= 0 {
+		return errors.New("invalid egress sticky binding write")
+	}
+	payload, err := json.Marshal(binding)
+	if err != nil {
+		return fmt.Errorf("encode egress sticky binding: %w", err)
+	}
+	return c.rdb.Set(ctx, buildSessionEgressKey(groupID, sessionID), payload, ttl).Err()
+}
+
+func (c *gatewayCache) RefreshSessionEgressTTL(ctx context.Context, groupID int64, sessionID string, ttl time.Duration) error {
+	if c == nil || c.rdb == nil || strings.TrimSpace(sessionID) == "" || ttl <= 0 {
+		return errors.New("invalid egress sticky session refresh")
+	}
+	return c.rdb.Expire(ctx, buildSessionEgressKey(groupID, sessionID), ttl).Err()
 }
 
 func buildOpenAIResponsesSessionWindowKey(groupID int64, sessionHash string) string {

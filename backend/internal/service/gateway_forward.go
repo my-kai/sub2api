@@ -89,7 +89,10 @@ func sleepWithContext(ctx context.Context, d time.Duration) error {
 
 // Forward 转发请求到Claude API
 func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, parsed *ParsedRequest) (result *ForwardResult, err error) {
-	account = account.SelectEgressForRequest()
+	account, err = prepareEgressForForward(ctx, s.cache, account)
+	if err != nil {
+		return nil, err
+	}
 	defer func() {
 		if result != nil && account != nil {
 			result.EgressHost = account.SelectedEgressHost

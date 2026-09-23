@@ -404,6 +404,9 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 			}
 		}
 		sessionHash = h.gatewayService.GenerateSessionHash(parsedReq)
+		service.AttachExplicitSessionIDToGin(c, service.ExplicitGatewaySessionID(c, parsedReq))
+	} else {
+		service.AttachExplicitSessionIDToGin(c, sessionHash)
 	}
 	sessionKey := sessionHash
 	if sessionHash != "" {

@@ -134,6 +134,7 @@ func grokPreviousResponseSessionSeed(body []byte) string {
 // used by stateless endpoints such as /v1/images.
 func (s *OpenAIGatewayService) GenerateExplicitSessionHash(c *gin.Context, body []byte) string {
 	sessionID := explicitOpenAIRequestSessionID(c, body)
+	AttachExplicitSessionIDToGin(c, explicitOpenAIEgressSessionID(c))
 	if sessionID == "" {
 		return ""
 	}
@@ -166,6 +167,7 @@ func (s *OpenAIGatewayService) GenerateSessionHash(c *gin.Context, body []byte) 
 	}
 
 	sessionID := explicitOpenAIRequestSessionID(c, body)
+	AttachExplicitSessionIDToGin(c, explicitOpenAIEgressSessionID(c))
 	if sessionID == "" && len(body) > 0 {
 		sessionID = deriveOpenAIContentSessionSeed(body)
 	}
@@ -180,6 +182,20 @@ func (s *OpenAIGatewayService) GenerateSessionHash(c *gin.Context, body []byte) 
 	currentHash, legacyHash := deriveOpenAISessionHashes(sessionID)
 	attachOpenAILegacySessionHashToGin(c, legacyHash)
 	return currentHash
+}
+
+// explicitOpenAIEgressSessionID excludes previous_response_id and
+// prompt_cache_key because both are account-sticky/upstream-cache signals, not
+// an explicit client session ID for the independent egress binding.
+func explicitOpenAIEgressSessionID(c *gin.Context) string {
+	if c == nil {
+		return ""
+	}
+	sessionID := explicitOpenAIHeaderSessionID(c)
+	if sessionID == "" && isGrokRequestContext(c) {
+		sessionID = strings.TrimSpace(c.GetHeader(grokConversationIDHeader))
+	}
+	return sanitizeSessionID(sessionID)
 }
 
 // grokStickyAffinitySeed scopes sticky routing by model without changing the
@@ -255,6 +271,7 @@ func (s *OpenAIGatewayService) SelectAccountForModel(ctx context.Context, groupI
 // SelectAccountForModelWithExclusions selects an account supporting the requested model while excluding specified accounts.
 // SelectAccountForModelWithExclusions 选择支持指定模型的账号，同时排除指定的账号。
 func (s *OpenAIGatewayService) SelectAccountForModelWithExclusions(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}) (*Account, error) {
+	ctx = withEgressStickyGroupID(ctx, groupID)
 	return s.selectAccountForModelWithExclusions(s.withOpenAIQuotaAutoPauseContext(ctx), groupID, PlatformOpenAI, sessionHash, requestedModel, excludedIDs, false, 0, "", false)
 }
 
@@ -1106,6 +1123,7 @@ func (s *OpenAIGatewayService) isBetterAccount(candidate, current *Account) bool
 
 // SelectAccountWithLoadAwareness selects an account with load-awareness and wait plan.
 func (s *OpenAIGatewayService) SelectAccountWithLoadAwareness(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}) (*AccountSelectionResult, error) {
+	ctx = withEgressStickyGroupID(ctx, groupID)
 	ctx = s.withOpenAIQuotaAutoPauseContext(ctx)
 	ctx = s.withOpenAIGroupPrivacyRequirement(ctx, groupID)
 	// 分组利润控制：legacy 公共入口同样装门，保证不经
@@ -1138,6 +1156,9 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 			return nil, err
 		}
 		account, result, err := s.prepareAccountSlot(ctx, account)
+		if err != nil {
+			return nil, err
+		}
 		if err == nil && result != nil && result.Acquired {
 			return s.newAcquiredSelectionResult(ctx, account, result.ReleaseFunc)
 		}
@@ -1209,6 +1230,9 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 						_ = s.deleteStickySessionAccountID(ctx, groupID, sessionHash)
 					} else {
 						account, result, err := s.prepareAccountSlot(ctx, account)
+						if err != nil {
+							return nil, err
+						}
 						if err == nil && result != nil && result.Acquired {
 							selection, selectErr := s.newAcquiredSelectionResult(ctx, account, result.ReleaseFunc)
 							if selectErr != nil {
@@ -1376,6 +1400,9 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 				continue
 			}
 			boundFresh, result, err := s.prepareAccountSlot(ctx, fresh)
+			if err != nil {
+				return nil, true, err
+			}
 			fresh = boundFresh
 			if err == nil && result != nil && result.Acquired {
 				selection, selectErr := s.newAcquiredSelectionResult(ctx, fresh, result.ReleaseFunc)
@@ -1416,6 +1443,9 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 				continue
 			}
 			boundFresh, result, err := s.prepareAccountSlot(ctx, fresh)
+			if err != nil {
+				return nil, err
+			}
 			fresh = boundFresh
 			if err == nil && result != nil && result.Acquired {
 				selection, selectErr := s.newAcquiredSelectionResult(ctx, fresh, result.ReleaseFunc)
@@ -1466,8 +1496,12 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 		if needsUpstreamCheck && s.isUpstreamModelRestrictedByChannel(ctx, *groupID, fresh, requestedModel, requireCompact) {
 			continue
 		}
-		if fresh.HasConfiguredEgress() {
-			fresh = fresh.SelectEgressForRequest()
+		fresh, egressKey, stickyHit, err := resolveEgressStickySelection(ctx, s.cache, fresh)
+		if err != nil {
+			return nil, err
+		}
+		if err := persistEgressStickySelection(ctx, s.cache, fresh.ID, egressKey, stickyHit); err != nil {
+			return nil, err
 		}
 		return s.newSelectionResult(ctx, fresh, false, nil, &AccountWaitPlan{
 			AccountID:      fresh.ID,
@@ -1542,13 +1576,26 @@ func (s *OpenAIGatewayService) prepareAccountSlot(ctx context.Context, account *
 	if account == nil {
 		return nil, nil, fmt.Errorf("account is required")
 	}
-	if account != nil && account.HasConfiguredEgress() {
-		bound := account.SelectEgressForRequest()
-		result, err := s.tryAcquireAccountEgressSlot(ctx, bound)
+	bound, egressKey, stickyHit, err := resolveEgressStickySelection(ctx, s.cache, account)
+	if err != nil {
+		return account, nil, err
+	}
+	var result *AcquireResult
+	if account.HasConfiguredEgress() {
+		result, err = s.tryAcquireAccountEgressSlot(ctx, bound)
+	} else {
+		result, err = s.tryAcquireAccountSlot(ctx, account.ID, account.Concurrency)
+	}
+	if err != nil || result == nil {
 		return bound, result, err
 	}
-	result, err := s.tryAcquireAccountSlot(ctx, account.ID, account.Concurrency)
-	return account, result, err
+	if err := persistEgressStickySelection(ctx, s.cache, bound.ID, egressKey, stickyHit); err != nil {
+		if result.ReleaseFunc != nil {
+			result.ReleaseFunc()
+		}
+		return bound, nil, err
+	}
+	return bound, result, nil
 }
 
 func (s *OpenAIGatewayService) resolveFreshSchedulableOpenAIAccount(ctx context.Context, account *Account, platform string, requestedModel string, requireCompact bool, requiredCapability OpenAIEndpointCapability) *Account {

@@ -365,7 +365,7 @@ func (r *accountRepository) GetByIDs(ctx context.Context, ids []int64) ([]*servi
 		outByID[entAcc.ID] = out
 	}
 	if len(proxyIDs) > 0 {
-		proxyMap, err := r.loadProxies(ctx, proxyIDs)
+		proxyMap, err := r.loadProxies(ctx, proxyIDs, true)
 		if err != nil {
 			return nil, err
 		}
@@ -1083,7 +1083,9 @@ func (r *accountRepository) ListWithFilters(ctx context.Context, params paginati
 		return nil, nil, err
 	}
 
-	outAccounts, err := r.accountsToService(ctx, accounts)
+	// The admin list must remain readable when an account still references a
+	// disabled/deleted proxy; administrators need the stale binding to repair it.
+	outAccounts, err := r.accountsToServiceWithProxyPolicy(ctx, accounts, false)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -3256,6 +3258,13 @@ func (r *accountRepository) queryAccountsByGroup(ctx context.Context, groupID in
 }
 
 func (r *accountRepository) accountsToService(ctx context.Context, accounts []*dbent.Account) ([]service.Account, error) {
+	return r.accountsToServiceWithProxyPolicy(ctx, accounts, true)
+}
+
+// accountsToServiceWithProxyPolicy hydrates accounts while keeping the proxy
+// validation policy explicit. Runtime/scheduler callers require active exits;
+// admin list callers may read stale bindings so they can correct them.
+func (r *accountRepository) accountsToServiceWithProxyPolicy(ctx context.Context, accounts []*dbent.Account, requireActiveProxies bool) ([]service.Account, error) {
 	if len(accounts) == 0 {
 		return []service.Account{}, nil
 	}
@@ -3277,7 +3286,7 @@ func (r *accountRepository) accountsToService(ctx context.Context, accounts []*d
 		}
 	}
 
-	proxyMap, err := r.loadProxies(ctx, proxyIDs)
+	proxyMap, err := r.loadProxies(ctx, proxyIDs, requireActiveProxies)
 	if err != nil {
 		return nil, err
 	}
@@ -3305,6 +3314,11 @@ func (r *accountRepository) accountsToService(ctx context.Context, accounts []*d
 			for _, id := range ids {
 				proxy, ok := proxyMap[id]
 				if !ok || proxy == nil {
+					if !requireActiveProxies {
+						// Keep the configured ID in the response even when its proxy row
+						// was removed, so the admin UI can repair the binding.
+						continue
+					}
 					return nil, fmt.Errorf("account %d egress proxy %d not found", out.ID, id)
 				}
 				out.EgressProxies = append(out.EgressProxies, proxy)
@@ -3355,13 +3369,19 @@ func notExpiredPredicate(now time.Time) dbpredicate.Account {
 	)
 }
 
-func (r *accountRepository) loadProxies(ctx context.Context, proxyIDs []int64) (map[int64]*service.Proxy, error) {
+// inactiveEgressProxySuffix marks stale exits in administrative account views.
+const inactiveEgressProxySuffix = "（失效）"
+
+// loadProxies loads configured proxies in batches. Active-state enforcement is
+// enabled for runtime hydration and disabled only for administrative reads.
+func (r *accountRepository) loadProxies(ctx context.Context, proxyIDs []int64, requireActiveProxies bool) (map[int64]*service.Proxy, error) {
 	proxyMap := make(map[int64]*service.Proxy)
 	proxyIDs = uniquePositiveInt64s(proxyIDs)
 	if len(proxyIDs) == 0 {
 		return proxyMap, nil
 	}
 
+	now := time.Now()
 	for start := 0; start < len(proxyIDs); start += postgresParameterBatchSize {
 		end := start + postgresParameterBatchSize
 		if end > len(proxyIDs) {
@@ -3375,10 +3395,16 @@ func (r *accountRepository) loadProxies(ctx context.Context, proxyIDs []int64) (
 			if p == nil {
 				return nil, fmt.Errorf("egress proxy is nil")
 			}
-			if p.DeletedAt != nil || p.Status != service.StatusActive {
+			if requireActiveProxies && (p.DeletedAt != nil || p.Status != service.StatusActive) {
 				return nil, fmt.Errorf("egress proxy %d is not active", p.ID)
 			}
-			proxyMap[p.ID] = proxyEntityToService(p)
+			proxy := proxyEntityToService(p)
+			if !requireActiveProxies && (!proxy.IsActive() || proxy.IsExpired(now)) && !strings.HasSuffix(proxy.Name, inactiveEgressProxySuffix) {
+				// Admin reads must expose stale bindings so they can be repaired,
+				// while making it unambiguous that this exit is unavailable.
+				proxy.Name += inactiveEgressProxySuffix
+			}
+			proxyMap[p.ID] = proxy
 		}
 	}
 	return proxyMap, nil
