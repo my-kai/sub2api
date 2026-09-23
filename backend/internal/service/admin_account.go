@@ -79,7 +79,7 @@ func (s *adminServiceImpl) ListOpenAISchedulableAccountsForSchedulerScore(ctx co
 }
 
 func (s *adminServiceImpl) GetAccount(ctx context.Context, id int64) (*Account, error) {
-	return s.accountRepo.GetByID(ctx, id)
+	return getAccountIncludingInactiveEgress(ctx, s.accountRepo, id)
 }
 
 func (s *adminServiceImpl) GetAccountsByIDs(ctx context.Context, ids []int64) ([]*Account, error) {
@@ -87,7 +87,7 @@ func (s *adminServiceImpl) GetAccountsByIDs(ctx context.Context, ids []int64) ([
 		return []*Account{}, nil
 	}
 
-	accounts, err := s.accountRepo.GetByIDs(ctx, ids)
+	accounts, err := getAccountsIncludingInactiveEgress(ctx, s.accountRepo, ids)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get accounts by IDs: %w", err)
 	}
@@ -277,7 +277,7 @@ func (s *adminServiceImpl) DuplicateAccount(ctx context.Context, id int64, actor
 		return existing, nil
 	}
 
-	source, err := s.accountRepo.GetByID(ctx, id)
+	source, err := getAccountIncludingInactiveEgress(ctx, s.accountRepo, id)
 	if err != nil {
 		return nil, err
 	}
@@ -600,7 +600,7 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 }
 
 func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *UpdateAccountInput) (*Account, error) {
-	account, err := s.accountRepo.GetByID(ctx, id)
+	account, err := getAccountIncludingInactiveEgress(ctx, s.accountRepo, id)
 	if err != nil {
 		return nil, err
 	}
@@ -926,7 +926,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	}
 
 	// 重新查询以确保返回完整数据（包括正确的 Proxy 关联对象）
-	updated, err := s.accountRepo.GetByID(ctx, id)
+	updated, err := getAccountIncludingInactiveEgress(ctx, s.accountRepo, id)
 	if err != nil {
 		return nil, err
 	}
@@ -946,7 +946,7 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 	delete(updates, OllamaCloudUsageAutoRefreshExtraKey)
 	delete(updates, OllamaCloudUsageSnapshotExtraKey)
 	if _, exists := updates[openAILongContextBillingEnabledKey]; exists {
-		account, err := s.accountRepo.GetByID(ctx, id)
+		account, err := getAccountIncludingInactiveEgress(ctx, s.accountRepo, id)
 		if err != nil {
 			return err
 		}
@@ -1009,7 +1009,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	// 预取所有目标账号，供凭据守卫/代理守卫/混合渠道检查共用，避免多次 DB 查询。
 	var cachedTargets []*Account
 	if len(input.Credentials) > 0 || input.ProxyID != nil || needMixedChannelCheck || openAISettings.any() || input.ProbeEnabled != nil || input.RateMultiplier != nil {
-		loaded, err := s.accountRepo.GetByIDs(ctx, input.AccountIDs)
+		loaded, err := getAccountsIncludingInactiveEgress(ctx, s.accountRepo, input.AccountIDs)
 		if err != nil {
 			return nil, err
 		}
@@ -1308,7 +1308,7 @@ func (s *adminServiceImpl) DeleteAccount(ctx context.Context, id int64) error {
 }
 
 func (s *adminServiceImpl) RefreshAccountCredentials(ctx context.Context, id int64) (*Account, error) {
-	account, err := s.accountRepo.GetByID(ctx, id)
+	account, err := getAccountIncludingInactiveEgress(ctx, s.accountRepo, id)
 	if err != nil {
 		return nil, err
 	}
@@ -1335,7 +1335,7 @@ func (s *adminServiceImpl) ClearAccountError(ctx context.Context, id int64) (*Ac
 	if s.runtimeBlocker != nil {
 		s.runtimeBlocker.ClearAccountSchedulingBlock(id)
 	}
-	return s.accountRepo.GetByID(ctx, id)
+	return getAccountIncludingInactiveEgress(ctx, s.accountRepo, id)
 }
 
 func (s *adminServiceImpl) SetAccountError(ctx context.Context, id int64, errorMsg string) error {
@@ -1346,7 +1346,7 @@ func (s *adminServiceImpl) SetAccountSchedulable(ctx context.Context, id int64, 
 	if err := s.accountRepo.SetSchedulable(ctx, id, schedulable); err != nil {
 		return nil, err
 	}
-	updated, err := s.accountRepo.GetByID(ctx, id)
+	updated, err := getAccountIncludingInactiveEgress(ctx, s.accountRepo, id)
 	if err != nil {
 		return nil, err
 	}
@@ -1358,7 +1358,7 @@ func (s *adminServiceImpl) RevertAccountProxyFallback(ctx context.Context, id in
 		return err
 	}
 	// 加载回退后的账号以获取实际 ProxyID，再传播到影子账号
-	account, err := s.accountRepo.GetByID(ctx, id)
+	account, err := getAccountIncludingInactiveEgress(ctx, s.accountRepo, id)
 	if err != nil {
 		return fmt.Errorf("get account after proxy revert: %w", err)
 	}
@@ -1369,7 +1369,7 @@ func (s *adminServiceImpl) RevertAccountProxyFallback(ctx context.Context, id in
 // 安全不变量：Credentials 恒不含 auth token（仅 model_mapping，守卫 isAllowedSparkShadowCredentialsUpdate 放行）。
 func (s *adminServiceImpl) CreateShadow(ctx context.Context, parentID int64, opts ShadowOptions) (*Account, error) {
 	// 1. 加载母账号并校验平台/类型
-	parent, err := s.accountRepo.GetByID(ctx, parentID)
+	parent, err := getAccountIncludingInactiveEgress(ctx, s.accountRepo, parentID)
 	if err != nil {
 		return nil, fmt.Errorf("get parent account: %w", err)
 	}
@@ -1653,7 +1653,7 @@ func (e *MixedChannelError) Error() string {
 }
 
 func (s *adminServiceImpl) ResetAccountQuota(ctx context.Context, id int64) error {
-	account, err := s.accountRepo.GetByID(ctx, id)
+	account, err := getAccountIncludingInactiveEgress(ctx, s.accountRepo, id)
 	if err != nil {
 		return err
 	}

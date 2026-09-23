@@ -126,6 +126,35 @@ type AccountRepository interface {
 	ListShadowsByParent(ctx context.Context, parentID int64) ([]*Account, error)
 }
 
+// inactiveEgressAccountReader is an optional repository extension for admin
+// and diagnostic reads. Runtime account queries must continue requiring active
+// proxies, while administrative screens need to load the account far enough to
+// display and repair a stale proxy binding.
+type inactiveEgressAccountReader interface {
+	GetByIDIncludingInactiveEgress(ctx context.Context, id int64) (*Account, error)
+	GetByIDsIncludingInactiveEgress(ctx context.Context, ids []int64) ([]*Account, error)
+}
+
+// getAccountIncludingInactiveEgress keeps stale proxy handling at the
+// repository boundary instead of making each admin caller reimplement it.
+func getAccountIncludingInactiveEgress(ctx context.Context, repo AccountRepository, id int64) (*Account, error) {
+	if reader, ok := repo.(inactiveEgressAccountReader); ok {
+		return reader.GetByIDIncludingInactiveEgress(ctx, id)
+	}
+	return repo.GetByID(ctx, id)
+}
+
+// getAccountsIncludingInactiveEgress is the batch counterpart used by admin
+// usage and account-management flows. Test doubles and older repository
+// implementations retain the existing strict-read behavior through the
+// explicit compatibility path above.
+func getAccountsIncludingInactiveEgress(ctx context.Context, repo AccountRepository, ids []int64) ([]*Account, error) {
+	if reader, ok := repo.(inactiveEgressAccountReader); ok {
+		return reader.GetByIDsIncludingInactiveEgress(ctx, ids)
+	}
+	return repo.GetByIDs(ctx, ids)
+}
+
 type AccountDuplicateRepository interface {
 	// CreateWithAccountGroups atomically persists an account, its exact group priorities,
 	// and the scheduler outbox event for the new routing snapshot.

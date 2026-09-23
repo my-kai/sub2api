@@ -348,7 +348,10 @@ func batchUsageErrorMessage(err error) string {
 func (s *AccountUsageService) getUsageForAccount(ctx context.Context, account *Account, forceProbe bool) (*UsageInfo, error) {
 	account = account.SelectEgressForRequest()
 	if account == nil {
-		return nil, fmt.Errorf("account is required")
+		// A stale configured exit must never be interpreted as direct traffic.
+		// Return an account-scoped error so batch callers can report this entry
+		// without aborting usage collection for other accounts.
+		return nil, fmt.Errorf("no valid egress proxy available")
 	}
 	accountID := account.ID
 
@@ -496,7 +499,7 @@ func (s *AccountUsageService) getUsageForAccount(ctx context.Context, account *A
 func (s *AccountUsageService) GetUsage(ctx context.Context, accountID int64, force ...bool) (*UsageInfo, error) {
 	forceProbe := len(force) > 0 && force[0]
 
-	account, err := s.accountRepo.GetByID(ctx, accountID)
+	account, err := getAccountIncludingInactiveEgress(ctx, s.accountRepo, accountID)
 	if err != nil {
 		return nil, fmt.Errorf("get account failed: %w", err)
 	}
@@ -534,7 +537,7 @@ func (s *AccountUsageService) GetUsageBatch(ctx context.Context, accountIDs []in
 		return usageByAccount, errorsByAccount, nil
 	}
 
-	accounts, err := s.accountRepo.GetByIDs(ctx, uniqueIDs)
+	accounts, err := getAccountsIncludingInactiveEgress(ctx, s.accountRepo, uniqueIDs)
 	if err != nil {
 		return nil, nil, fmt.Errorf("get accounts failed: %w", err)
 	}
@@ -589,7 +592,7 @@ func (s *AccountUsageService) GetUsageBatch(ctx context.Context, accountIDs []in
 // GetPassiveUsage 从 Account.Extra 中的被动采样数据构建 UsageInfo，不调用外部 API。
 // 仅适用于 Anthropic OAuth / SetupToken 账号。
 func (s *AccountUsageService) GetPassiveUsage(ctx context.Context, accountID int64) (*UsageInfo, error) {
-	account, err := s.accountRepo.GetByID(ctx, accountID)
+	account, err := getAccountIncludingInactiveEgress(ctx, s.accountRepo, accountID)
 	if err != nil {
 		return nil, fmt.Errorf("get account failed: %w", err)
 	}
