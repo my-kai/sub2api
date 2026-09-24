@@ -88,7 +88,6 @@ func (h *AccountHandler) SetCodexTicketSettings(settings *service.SettingService
 func (h *AccountHandler) SetOpenCodeGoUsageService(usage *service.OpenCodeGoUsageService) {
 	h.opencodeGoUsage = usage
 }
-}
 
 // NewAccountHandler creates a new admin account handler
 func NewAccountHandler(

@@ -236,21 +236,21 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyCodexCLIOnlyEngineFingerprintSignals: openai.DefaultEngineFingerprintSignalsJSON(),
 
 		// 分组隔离（默认不允许未分组 Key 调度）
-		SettingKeyAllowUngroupedKeyScheduling:                        "false",
-		SettingKeyOpenAILowUpstreamRatePriorityEnabled:               "false",
-		SettingKeyOpenAIOAuthSchedulingRateMultiplier:                "1",
-		SettingKeyEnableAnthropicCacheTTL1hInjection:                 "false",
-		SettingKeyRewriteMessageCacheControl:                         strconv.FormatBool(s.defaultRewriteMessageCacheControl()),
-		SettingKeyEnableClientDatelineNormalization:                  "true",
-		SettingKeyAntigravityUserAgentVersion:                        "",
-		SettingKeyOpenAICodexUserAgent:                               "",
-		SettingKeyOpenAICodexClientVersion:                           "",
-		SettingKeyOpenAICodexClientVersionSynced:                     "",
-		SettingKeyOpenAICodexVersionAutoSyncEnabled:                  "true",
-		SettingKeyOpenAICodexTicketHarvestProxyURL:                   "",
-		SettingKeyClaudeCodeClientVersion:                            "",
-		SettingKeyClaudeCodeClientVersionSynced:                      "",
-		SettingKeyClaudeCodeVersionAutoSyncEnabled:                   "true",		SettingPaymentVisibleMethodAlipaySource:                      "",
+		SettingKeyAllowUngroupedKeyScheduling:          "false",
+		SettingKeyOpenAILowUpstreamRatePriorityEnabled: "false",
+		SettingKeyOpenAIOAuthSchedulingRateMultiplier:  "1",
+		SettingKeyEnableAnthropicCacheTTL1hInjection:   "false",
+		SettingKeyRewriteMessageCacheControl:           strconv.FormatBool(s.defaultRewriteMessageCacheControl()),
+		SettingKeyEnableClientDatelineNormalization:    "true",
+		SettingKeyAntigravityUserAgentVersion:          "",
+		SettingKeyOpenAICodexUserAgent:                 "",
+		SettingKeyOpenAICodexClientVersion:             "",
+		SettingKeyOpenAICodexClientVersionSynced:       "",
+		SettingKeyOpenAICodexVersionAutoSyncEnabled:    "true",
+		SettingKeyOpenAICodexTicketHarvestProxyURL:     "",
+		SettingKeyClaudeCodeClientVersion:              "",
+		SettingKeyClaudeCodeClientVersionSynced:        "",
+		SettingKeyClaudeCodeVersionAutoSyncEnabled:     "true", SettingPaymentVisibleMethodAlipaySource: "",
 		SettingPaymentVisibleMethodWxpaySource:                       "",
 		SettingPaymentVisibleMethodAlipayEnabled:                     "false",
 		SettingPaymentVisibleMethodWxpayEnabled:                      "false",
@@ -909,7 +909,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 		result.ClaudeCodeVersionAutoSyncEnabled = v == "true"
 	} else {
 		result.ClaudeCodeVersionAutoSyncEnabled = true
-	}	// codex_cli_only 加固
+	} // codex_cli_only 加固
 	result.MinCodexVersion = settings[SettingKeyMinCodexVersion]
 	result.MaxCodexVersion = settings[SettingKeyMaxCodexVersion]
 	result.CodexCLIOnlyBlacklist = settings[SettingKeyCodexCLIOnlyBlacklist]
