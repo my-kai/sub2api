@@ -92,7 +92,7 @@ func TestStoreCreateApplicationBindsMultipleRechargeOrdersWithTitleSnapshot(t *t
 		WithArgs(int64(10), int64(7)).
 		WillReturnRows(titleRows().AddRow(int64(10), int64(7), "Snapshot Inc", "TAX999", "invoice@example.com", true, nil, now, now))
 	mock.ExpectQuery(regexp.QuoteMeta("FROM payment_orders")).
-		WithArgs(int64(7), sqlmock.AnyArg(), defaultCurrency, payment.OrderTypeBalance, sqlmock.AnyArg()).
+		WithArgs(int64(7), sqlmock.AnyArg(), defaultCurrency, payment.OrderTypeBalance, sqlmock.AnyArg(), eligibleOrderWindowDays).
 		WillReturnRows(eligibleOrderRows().
 			AddRow(int64(501), "order-501", "10.10", "10.10", "CNY", payment.TypeStripe, payment.OrderStatusCompleted, paidAt, now, now).
 			AddRow(int64(502), "order-502", "20.40", "20.40", "CNY", payment.TypeStripe, payment.OrderStatusCompleted, paidAt, now, now))
@@ -163,7 +163,7 @@ func TestStoreCreateApplicationRejectsIneligibleOrder(t *testing.T) {
 		WithArgs(int64(10), int64(7)).
 		WillReturnRows(titleRows().AddRow(int64(10), int64(7), "Snapshot Inc", "TAX999", "invoice@example.com", true, nil, now, now))
 	mock.ExpectQuery(regexp.QuoteMeta("FROM payment_orders")).
-		WithArgs(int64(7), sqlmock.AnyArg(), defaultCurrency, payment.OrderTypeBalance, sqlmock.AnyArg()).
+		WithArgs(int64(7), sqlmock.AnyArg(), defaultCurrency, payment.OrderTypeBalance, sqlmock.AnyArg(), eligibleOrderWindowDays).
 		WillReturnRows(eligibleOrderRows().
 			AddRow(int64(501), "order-501", "10.10", "10.10", "CNY", payment.TypeStripe, payment.OrderStatusCompleted, now, now, now))
 	mock.ExpectRollback()
@@ -186,7 +186,7 @@ func TestStoreCreateApplicationRejectsOccupiedOrder(t *testing.T) {
 		WithArgs(int64(10), int64(7)).
 		WillReturnRows(titleRows().AddRow(int64(10), int64(7), "Snapshot Inc", "TAX999", "invoice@example.com", true, nil, now, now))
 	mock.ExpectQuery(regexp.QuoteMeta("FROM payment_orders")).
-		WithArgs(int64(7), sqlmock.AnyArg(), defaultCurrency, payment.OrderTypeBalance, sqlmock.AnyArg()).
+		WithArgs(int64(7), sqlmock.AnyArg(), defaultCurrency, payment.OrderTypeBalance, sqlmock.AnyArg(), eligibleOrderWindowDays).
 		WillReturnRows(eligibleOrderRows().
 			AddRow(int64(501), "order-501", "10.10", "10.10", "CNY", payment.TypeStripe, payment.OrderStatusCompleted, now, now, now))
 	mock.ExpectQuery(regexp.QuoteMeta("FROM custom_invoice_application_orders")).
