@@ -376,11 +376,14 @@ func applyUsageBilling(ctx context.Context, requestID string, usageLog *UsageLog
 
 	cmd := buildUsageBillingCommand(requestID, usageLog, p)
 	if cmd == nil || cmd.RequestID == "" || repo == nil {
-		if requiresUnifiedBalanceBilling(p, cmd) {
-			return false, fmt.Errorf("%w: usage billing repository is required for balance billing", ErrBillingServiceUnavailable)
-		}
+		// Simple mode 优先于统一点余额判定：上游契约要求 simple 模式缺失 repo 时
+		// 必须返回 ErrSimpleModeKeyRateLimitBillingUnavailable，不能被统一点余额
+		// 的通用错误覆盖（否则前端无法区分两种失败）。
 		if p.SimpleModeKeyRateLimitOnly {
 			return false, ErrSimpleModeKeyRateLimitBillingUnavailable
+		}
+		if requiresUnifiedBalanceBilling(p, cmd) {
+			return false, fmt.Errorf("%w: usage billing repository is required for balance billing", ErrBillingServiceUnavailable)
 		}
 		// The legacy path is only a fallback for standard billing. Simple mode
 		// must retain request-id deduplication and never bill other balances.

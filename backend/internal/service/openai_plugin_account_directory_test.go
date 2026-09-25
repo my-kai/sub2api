@@ -92,6 +92,10 @@ func TestAccountReadableSnapshot_DenylistTripwire(t *testing.T) {
 	// = relational graphs with back-references that would cycle under encoding/json.
 	stripped := map[string]struct{}{
 		"Credentials": {}, "Groups": {}, "AccountGroups": {},
+		// EgressProxies: 多出口代理对象数组，每个对象内嵌代理密码（与单个 Proxy
+		// 不同，出口规模可能很大），不随插件元数据下发；出口能力经
+		// EgressProxyIDs/EgressIncludeLocal/SelectedEgressHost 暴露即可。
+		"EgressProxies": {},
 	}
 	// Fields intentionally exposed as readable metadata (incl. Extra and Proxy —
 	// the proxy password is already handed out via ResolveOutboundIdentity's URL).
@@ -105,6 +109,10 @@ func TestAccountReadableSnapshot_DenylistTripwire(t *testing.T) {
 		"TempUnschedulableUntil": {}, "TempUnschedulableReason": {},
 		"SessionWindowStart": {}, "SessionWindowEnd": {}, "SessionWindowStatus": {},
 		"ParentAccountID": {}, "QuotaDimension": {}, "GroupIDs": {},
+		// 二开多出口：出口选择元数据均为非敏感可读信息（SelectedEgressKey 仅是
+		// "local" / "proxy:<id>" 槽位标识）。
+		"EgressProxyIDs": {}, "EgressIncludeLocal": {},
+		"SelectedEgressHost": {}, "SelectedEgressKey": {},
 	}
 	tp := reflect.TypeOf(Account{})
 	for i := 0; i < tp.NumField(); i++ {

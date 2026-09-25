@@ -111,6 +111,9 @@ func accountReadableSnapshotJSON(account *Account) []byte {
 	clone.Credentials = nil
 	clone.Groups = nil
 	clone.AccountGroups = nil
+	// EgressProxies 每个元素都内嵌代理密码且随出口规模线性膨胀，不进入插件快照；
+	// 出口元数据由 EgressProxyIDs / EgressIncludeLocal / SelectedEgress* 字段承载。
+	clone.EgressProxies = nil
 	data, err := json.Marshal(&clone)
 	if err != nil {
 		return nil
