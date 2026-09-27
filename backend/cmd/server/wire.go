@@ -14,6 +14,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	customaccountdefaults "github.com/Wei-Shaw/sub2api/internal/custom/accountdefaults"
 	customactivityruntime "github.com/Wei-Shaw/sub2api/internal/custom/activity/runtime"
 	customaigatewayadmintransfer "github.com/Wei-Shaw/sub2api/internal/custom/aigatewayadmintransfer"
 	customcallbackauth "github.com/Wei-Shaw/sub2api/internal/custom/callbackauth"
@@ -68,6 +69,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 		customoauthapp.ProvideBundle,
 		custompromptauditv2.ProviderSet,
 		customturnlog.ProviderSet,
+		customaccountdefaults.ProviderSet,
 
 		// Server layer ProviderSet
 		server.ProviderSet,

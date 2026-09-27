@@ -14,6 +14,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	runtime2 "github.com/Wei-Shaw/sub2api/internal/custom/activity/runtime"
 	"github.com/Wei-Shaw/sub2api/internal/custom/aigatewayadmintransfer"
+	"github.com/Wei-Shaw/sub2api/internal/custom/accountdefaults"
 	"github.com/Wei-Shaw/sub2api/internal/custom/callbackauth"
 	"github.com/Wei-Shaw/sub2api/internal/custom/giftcredit/runtime"
 	"github.com/Wei-Shaw/sub2api/internal/custom/invoice"
@@ -388,7 +389,11 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	if err != nil {
 		return nil, err
 	}
-	engine := server.ProvideRouter(configConfig, handlers, jwtAuthMiddleware, optionalJWTAuthMiddleware, adminAuthMiddleware, apiKeyAuthMiddleware, auditLogMiddleware, stepUpAuthMiddleware, apiKeyService, subscriptionService, opsService, settingService, compositeRouteResolver, redisClient, aigatewayadmintransferBundle, bundle2, callbackauthBundle, invoiceBundle, oauthappBundle, promptauditv2Bundle, turnlogBundle)
+	accountdefaultsBundle, err := accountdefaults.ProvideBundle(db, proxyRepository)
+	if err != nil {
+		return nil, err
+	}
+	engine := server.ProvideRouter(configConfig, handlers, jwtAuthMiddleware, optionalJWTAuthMiddleware, adminAuthMiddleware, apiKeyAuthMiddleware, auditLogMiddleware, stepUpAuthMiddleware, apiKeyService, subscriptionService, opsService, settingService, compositeRouteResolver, redisClient, aigatewayadmintransferBundle, bundle2, callbackauthBundle, invoiceBundle, oauthappBundle, promptauditv2Bundle, turnlogBundle, accountdefaultsBundle)
 	httpServer := server.ProvideHTTPServer(configConfig, engine)
 	mainGiftCreditWiring, err := provideGiftCreditWiring(runtimeBundle, billingCacheService, apiKeyService, userService, adminService)
 	if err != nil {

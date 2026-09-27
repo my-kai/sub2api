@@ -23,6 +23,8 @@ import (
 	customoauthapproutes "github.com/Wei-Shaw/sub2api/internal/custom/oauthapp/routes"
 	custompromptauditv2 "github.com/Wei-Shaw/sub2api/internal/custom/promptauditv2"
 	custompromptauditv2routes "github.com/Wei-Shaw/sub2api/internal/custom/promptauditv2/routes"
+	customaccountdefaults "github.com/Wei-Shaw/sub2api/internal/custom/accountdefaults"
+	customaccountdefaultsroutes "github.com/Wei-Shaw/sub2api/internal/custom/accountdefaults/routes"
 	customturnlog "github.com/Wei-Shaw/sub2api/internal/custom/turnlog"
 	customturnlogroutes "github.com/Wei-Shaw/sub2api/internal/custom/turnlog/routes"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
@@ -61,6 +63,7 @@ func SetupRouter(
 	customOAuthApp *customoauthapp.Bundle,
 	customPromptAuditV2 *custompromptauditv2.Bundle,
 	customTurnLog *customturnlog.Bundle,
+	customAccountDefaults *customaccountdefaults.Bundle,
 ) *gin.Engine {
 	middleware2.SetIngressRejectRecorder(opsService)
 	// 缓存 iframe 页面的 origin 列表，用于动态注入 CSP frame-src
@@ -115,7 +118,7 @@ func SetupRouter(
 	}
 
 	// 注册路由
-	registerRoutes(r, handlers, jwtAuth, optionalJWTAuth, adminAuth, apiKeyAuth, auditLog, stepUpAuth, apiKeyService, subscriptionService, opsService, settingService, compositeResolver, cfg, redisClient, customAIGatewayAdminTransfer, customActivity, customCallbackAuth, customInvoice, customOAuthApp, customPromptAuditV2, customTurnLog)
+	registerRoutes(r, handlers, jwtAuth, optionalJWTAuth, adminAuth, apiKeyAuth, auditLog, stepUpAuth, apiKeyService, subscriptionService, opsService, settingService, compositeResolver, cfg, redisClient, customAIGatewayAdminTransfer, customActivity, customCallbackAuth, customInvoice, customOAuthApp, customPromptAuditV2, customTurnLog, customAccountDefaults)
 
 	return r
 }
@@ -144,6 +147,7 @@ func registerRoutes(
 	customOAuthApp *customoauthapp.Bundle,
 	customPromptAuditV2 *custompromptauditv2.Bundle,
 	customTurnLog *customturnlog.Bundle,
+	customAccountDefaults *customaccountdefaults.Bundle,
 ) {
 	// 通用路由（健康检查、状态等）
 	routes.RegisterCommonRoutes(r)
@@ -170,6 +174,7 @@ func registerRoutes(
 	registerCustomAIGatewayAdminTransferRoutes(v1, customAIGatewayAdminTransfer, adminAuth)
 	registerCustomPromptAuditV2Routes(v1, customPromptAuditV2, adminAuth, auditLog, settingService)
 	registerCustomTurnLogRoutes(v1, customTurnLog, adminAuth, auditLog, settingService)
+	registerCustomAccountDefaultsRoutes(v1, customAccountDefaults, adminAuth, auditLog, settingService)
 
 	handler.RegisterPageRoutes(v1, cfg.Pricing.DataDir, gin.HandlerFunc(jwtAuth), gin.HandlerFunc(adminAuth), settingService)
 }
@@ -184,6 +189,18 @@ func registerCustomTurnLogRoutes(v1 *gin.RouterGroup, bundle *customturnlog.Bund
 	admin.Use(gin.HandlerFunc(auditLog))
 	admin.Use(middleware2.AdminComplianceGuard(settingService))
 	customturnlogroutes.RegisterAdminRoutes(admin, bundle.Handler)
+}
+
+// registerCustomAccountDefaultsRoutes mounts the administrator-only account defaults surface.
+func registerCustomAccountDefaultsRoutes(v1 *gin.RouterGroup, bundle *customaccountdefaults.Bundle, adminAuth middleware2.AdminAuthMiddleware, auditLog middleware2.AuditLogMiddleware, settingService *service.SettingService) {
+	if v1 == nil || bundle == nil || bundle.Handler == nil {
+		return
+	}
+	admin := v1.Group("/admin")
+	admin.Use(gin.HandlerFunc(adminAuth))
+	admin.Use(gin.HandlerFunc(auditLog))
+	admin.Use(middleware2.AdminComplianceGuard(settingService))
+	customaccountdefaultsroutes.RegisterAdminRoutes(admin, bundle.Handler)
 }
 
 // registerCustomPromptAuditV2Routes mounts only the authenticated management

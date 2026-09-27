@@ -60,6 +60,16 @@ vi.mock('@/api/admin/accounts', () => ({
   getAntigravityDefaultModelMapping: vi.fn().mockResolvedValue([]),
 }))
 
+// 账号默认配置（二开）：测试中默认返回空配置（不带入模型/代理），保持用例原语义。
+vi.mock('@/custom/accountDefaults/api', () => ({
+  resolveAccountDefaults: vi.fn().mockResolvedValue({
+    models_by_platform: {},
+    proxy_mode: '',
+    egress_proxy_ids: [],
+    egress_include_local: false,
+  }),
+}))
+
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
   return {

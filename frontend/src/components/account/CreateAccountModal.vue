@@ -3893,12 +3893,15 @@ import { useAppStore } from '@/stores/app'
 import {
   claudeModels,
   getPresetMappingsByPlatform,
-  getModelsByPlatform,
   commonErrorCodes,
   buildModelMappingObject,
   fetchAntigravityDefaultMappings,
   isValidWildcardPattern
 } from '@/composables/useModelWhitelist'
+import {
+  resolveAccountDefaults,
+  type ResolvedAccountDefaults
+} from '@/custom/accountDefaults/api'
 import { adminAPI } from '@/api/admin'
 import { useQuotaNotifyState } from '@/composables/useQuotaNotifyState'
 import {
@@ -4742,6 +4745,41 @@ const egressSelection = computed<number[]>({
   }
 })
 
+// ==================== 账号默认配置（二开） ====================
+// 「系统设置 → 账号配置」预设的新建账号默认值。打开表单时解析一次（
+// random 模式的随机代理由服务端抽取），后续平台切换只重新应用模型默认；
+// 代理默认只在打开时应用一次，避免覆盖管理员手动调整。所有默认值均可在表单中修改。
+const accountDefaults = ref<ResolvedAccountDefaults | null>(null)
+
+const loadAccountDefaults = async () => {
+  try {
+    accountDefaults.value = await resolveAccountDefaults()
+  } catch {
+    // 默认值仅是便捷带入，拉取失败不阻断建号主流程。
+    accountDefaults.value = null
+  }
+}
+
+/** 按平台应用模型默认：配置了白名单则带入，未配置则保持空（= 不限制模型）。 */
+const applyModelDefaultForPlatform = (platform: AccountPlatform) => {
+  const configured = accountDefaults.value?.models_by_platform?.[platform] ?? []
+  allowedModels.value = [...configured]
+}
+
+/** 应用代理默认：fixed 带入配置的 N 个，random 带入服务端抽好的 1 个；均支持手动改。 */
+const applyProxyDefaults = () => {
+  const resolved = accountDefaults.value
+  if (!resolved) return
+  const ids = resolved.egress_proxy_ids ?? []
+  if (ids.length === 0 && !resolved.egress_include_local) {
+    // 没有任何默认出口（如 random 模式代理池为空）：保留表单默认值，由管理员手选。
+    return
+  }
+  form.egress_proxy_ids = [...ids]
+  form.egress_include_local = resolved.egress_include_local
+  form.proxy_id = form.egress_proxy_ids[0] ?? null
+}
+
 // Helper to check if current type needs OAuth flow
 const isOAuthFlow = computed(() => {
   // Antigravity upstream 类型不需要 OAuth 流程
@@ -4788,14 +4826,16 @@ const canExchangeCode = computed(() => {
 // Watchers
 watch(
   () => props.show,
-  (newVal) => {
+  async (newVal) => {
     if (newVal) {
       // Load TLS fingerprint profiles
       adminAPI.tlsFingerprintProfiles.list()
         .then(profiles => { tlsFingerprintProfiles.value = profiles.map(p => ({ id: p.id, name: p.name })) })
         .catch(() => { tlsFingerprintProfiles.value = [] })
-      // Modal opened - fill related models
-      allowedModels.value = [...getModelsByPlatform(form.platform)]
+      // Modal opened - 先拉取账号默认配置（2A：打开时解析一次，随机代理已抽好）
+      await loadAccountDefaults()
+      applyModelDefaultForPlatform(form.platform)
+      applyProxyDefaults()
       // Antigravity: 默认使用映射模式并填充默认映射
       if (form.platform === 'antigravity') {
         antigravityModelRestrictionMode.value = 'mapping'
@@ -4858,7 +4898,7 @@ watch(
               : 'https://api.anthropic.com'
     }
     // Clear model-related settings
-    allowedModels.value = []
+    applyModelDefaultForPlatform(newPlatform)
     upstreamModelsPreviewed.value = false
     modelMappings.value = []
     // Antigravity: 默认使用映射模式并填充默认映射
@@ -4977,12 +5017,12 @@ const handleSelectGeminiOAuthType = (oauthType: 'code_assist' | 'google_one' | '
   geminiOAuthType.value = oauthType
 }
 
-// Auto-fill related models when switching to whitelist mode or changing platform
+// Auto-fill configured models when switching to whitelist mode or changing platform
 watch(
   [modelRestrictionMode, () => form.platform],
   ([newMode]) => {
     if (newMode === 'whitelist') {
-      allowedModels.value = [...getModelsByPlatform(form.platform)]
+      applyModelDefaultForPlatform(form.platform)
     }
   }
 )
