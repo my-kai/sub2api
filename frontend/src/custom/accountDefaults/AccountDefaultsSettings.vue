@@ -70,22 +70,6 @@
       </div>
     </div>
 
-    <!-- 独立保存（与备份 Tab 相同模式，不参与主表单提交） -->
-    <div class="flex justify-end">
-      <button type="button" class="btn btn-primary" :disabled="saving || loading" @click="save">
-        <svg
-          v-if="saving"
-          class="h-4 w-4 animate-spin"
-          xmlns="http://www.w3.org/2000/svg"
-          fill="none"
-          viewBox="0 0 24 24"
-        >
-          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
-        </svg>
-        {{ saving ? t('common.saving') : t('common.save') }}
-      </button>
-    </div>
   </div>
 </template>
 
@@ -191,7 +175,9 @@ const load = async () => {
   }
 }
 
-const save = async () => {
+const save = async (): Promise<boolean> => {
+  if (loading.value) return false
+
   saving.value = true
   try {
     const saved = await updateAccountDefaults({ ...form })
@@ -199,16 +185,19 @@ const save = async () => {
     form.proxy_mode = saved.proxy_mode ?? ''
     form.proxy_fixed_ids = saved.proxy_fixed_ids ?? []
     form.allow_local_egress = !!saved.allow_local_egress
-    appStore.showSuccess(t('admin.settings.accountDefaults.saveSuccess'))
+    return true
   } catch (err) {
     const message =
       (err as { message?: string })?.message ||
       t('admin.settings.accountDefaults.saveFailed')
     appStore.showError(message)
+    return false
   } finally {
     saving.value = false
   }
 }
+
+defineExpose({ save })
 
 onMounted(load)
 </script>

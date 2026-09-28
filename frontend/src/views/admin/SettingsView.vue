@@ -8988,12 +8988,12 @@
           <BackupSettings />
         </div>
 
-        <!-- Tab: Account Defaults（二开 custom 模块，独立保存不走主表单） -->
+        <!-- Tab: Account Defaults（二开 custom 模块，复用主表单保存） -->
         <div v-show="activeTab === 'accountDefaults'" class="space-y-6">
-          <AccountDefaultsSettings />
+          <AccountDefaultsSettings ref="accountDefaultsSettingsRef" />
         </div>
 
-        <!-- Save Button -->
+        <!-- Save Button（账号配置也复用此处的通用保存按钮） -->
         <div v-show="activeTab !== 'backup'" class="flex justify-end">
           <button
             type="submit"
@@ -12025,6 +12025,16 @@ async function saveSettings() {
     );
     appendAuthSourceDefaultsToUpdateRequest(payload, authSourceDefaults);
 
+    // 账号默认配置使用本页通用保存按钮；仅在当前 Tab 编辑时提交，避免
+    // 普通系统配置保存时重复请求 custom API。
+    if (
+      activeTab.value === "accountDefaults" &&
+      accountDefaultsSettingsRef.value &&
+      !(await accountDefaultsSettingsRef.value.save())
+    ) {
+      return;
+    }
+
     const updated = await settingsStepUp.run(() =>
       adminAPI.settings.updateSettings(payload),
     );
@@ -12801,6 +12811,9 @@ const deletingProviderId = ref<number | null>(null);
 const providerDialogRef = ref<InstanceType<
   typeof PaymentProviderDialog
 > | null>(null);
+const accountDefaultsSettingsRef = ref<InstanceType<
+  typeof AccountDefaultsSettings
+> | null>(null);
 
 const providerKeyOptions = computed(() => [
   { value: "easypay", label: t("admin.settings.payment.providerEasypay") },
@@ -13525,12 +13538,8 @@ watch(
 }
 
 @media (min-width: 768px) {
-  .settings-tabs {
-    @apply min-w-full;
-  }
-
   .settings-tab {
-    @apply min-w-0 flex-1 basis-0 overflow-hidden px-2 text-[13px];
+    @apply px-3 text-sm;
   }
 
   .settings-tab-icon {
@@ -13589,7 +13598,8 @@ watch(
 }
 
 .settings-tab-label {
-  @apply min-w-0 overflow-hidden text-ellipsis whitespace-nowrap leading-none;
+  /* 文字不压缩、不截断：容器放不下时由 settings-tabs-scroll 横向滚动 */
+  @apply whitespace-nowrap leading-none;
 }
 </style>
 

@@ -25,10 +25,10 @@
 
 ## 前端
 
-- Tab 内容组件：`frontend/src/custom/accountDefaults/AccountDefaultsSettings.vue`（Card 外层、独立保存按钮，与 Backup Tab 同模式，不走主表单提交）。
+- Tab 内容组件：`frontend/src/custom/accountDefaults/AccountDefaultsSettings.vue`（Card 外层，复用 SettingsView 底部的通用保存按钮）。
 - API wrapper：`frontend/src/custom/accountDefaults/api.ts`。
 - 主仓薄接入：
-  - `SettingsView.vue`：tab key `accountDefaults` + v-show 区块 + import。
+  - `SettingsView.vue`：tab key `accountDefaults` + v-show 区块 + import，并通过通用保存按钮触发账号配置保存。
   - `CreateAccountModal.vue`：打开时调 `resolveAccountDefaults()` 带入模型/代理默认（拉取失败静默降级，不阻断建号）。
   - i18n：`admin.settings.tabs.accountDefaults` + `admin.settings.accountDefaults.*`（zh/en）。
 
