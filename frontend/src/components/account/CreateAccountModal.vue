@@ -3886,7 +3886,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch } from 'vue'
+import { ref, reactive, computed, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 
@@ -4333,11 +4333,7 @@ const syncPreviewCredentials = computed(() => {
   const baseUrl = isMultiProtocolPlatform.value && apiProtocol.value === 'adaptive'
     ? adaptiveBaseUrls.value.chat_completions.trim() || apiKeyBaseUrl.value.trim()
     : apiKeyBaseUrl.value.trim()
-  const modelMapping = buildModelMappingObject(
-    modelRestrictionMode.value,
-    allowedModels.value,
-    modelMappings.value
-  )
+  const modelMapping = buildAccountModelMapping()
   return {
     platform: form.platform,
     type: form.type,
@@ -4361,6 +4357,15 @@ const openAICompactModelMappings = ref<ModelMapping[]>([])
 const modelRestrictionMode = ref<'whitelist' | 'mapping'>('whitelist')
 const allowedModels = ref<string[]>([])
 const upstreamModelsPreviewed = ref(false)
+// 系统账号配置只提供表单初始值；只有用户实际编辑模型限制后，
+// 才把 model_mapping 持久化到新账号，避免默认值改变网关调度范围。
+const accountModelRestrictionDirty = ref(false)
+const applyingAccountModelDefaults = ref(false)
+
+const buildAccountModelMapping = () => {
+  if (!accountModelRestrictionDirty.value) return null
+  return buildModelMappingObject(modelRestrictionMode.value, allowedModels.value, modelMappings.value)
+}
 const DEFAULT_POOL_MODE_RETRY_COUNT = 3
 const MAX_POOL_MODE_RETRY_COUNT = 10
 const DEFAULT_POOL_MODE_RETRY_STATUS_CODES = [401, 403, 429]
@@ -4763,7 +4768,12 @@ const loadAccountDefaults = async () => {
 /** 按平台应用模型默认：配置了白名单则带入，未配置则保持空（= 不限制模型）。 */
 const applyModelDefaultForPlatform = (platform: AccountPlatform) => {
   const configured = accountDefaults.value?.models_by_platform?.[platform] ?? []
+  applyingAccountModelDefaults.value = true
+  accountModelRestrictionDirty.value = false
   allowedModels.value = [...configured]
+  void nextTick(() => {
+    applyingAccountModelDefaults.value = false
+  })
 }
 
 /** 应用代理默认：fixed 带入配置的 N 个，random 带入服务端抽好的 1 个；均支持手动改。 */
@@ -4822,6 +4832,17 @@ const canExchangeCode = computed(() => {
   }
   return authCode.trim() && oauth.sessionId.value && !oauth.loading.value
 })
+
+// 默认带入不算用户编辑；模型选择、清空、映射编辑或模式切换会标记为 dirty。
+watch(
+  [allowedModels, modelMappings, modelRestrictionMode],
+  () => {
+    if (!applyingAccountModelDefaults.value) {
+      accountModelRestrictionDirty.value = true
+    }
+  },
+  { deep: true }
+)
 
 // Watchers
 watch(
@@ -5344,6 +5365,7 @@ const submitCreateAccount = async (payload: CreateAccountRequest) => {
 
 // Methods
 const resetForm = () => {
+  applyingAccountModelDefaults.value = true
   step.value = 1
   form.name = ''
   form.notes = ''
@@ -5383,6 +5405,10 @@ const resetForm = () => {
   openAICompactModelMappings.value = []
   modelRestrictionMode.value = 'whitelist'
   allowedModels.value = [...claudeModels] // Default fill related models
+  accountModelRestrictionDirty.value = false
+  void nextTick(() => {
+    applyingAccountModelDefaults.value = false
+  })
 
   antigravityModelRestrictionMode.value = 'mapping'
   antigravityWhitelistModels.value = []
@@ -5731,9 +5757,7 @@ const handleSubmit = async () => {
     }
 
     // Model mapping
-    const modelMapping = buildModelMappingObject(
-      modelRestrictionMode.value, allowedModels.value, modelMappings.value
-    )
+    const modelMapping = buildAccountModelMapping()
     if (modelMapping) {
       credentials.model_mapping = modelMapping
     }
@@ -5876,7 +5900,7 @@ const handleSubmit = async () => {
 
   // Add model mapping if configured（OpenAI 开启自动透传时不应用）
   if (!isOpenAIModelRestrictionDisabled.value) {
-    const modelMapping = buildModelMappingObject(modelRestrictionMode.value, allowedModels.value, modelMappings.value)
+    const modelMapping = buildAccountModelMapping()
     if (modelMapping) {
       credentials.model_mapping = modelMapping
     }
@@ -6037,7 +6061,7 @@ const createAccountAndFinish = async (
     if (!credentials.base_url) {
       credentials.base_url = apiKeyBaseUrl.value.trim() || 'https://api.x.ai/v1'
     }
-    const modelMapping = buildModelMappingObject(modelRestrictionMode.value, allowedModels.value, modelMappings.value)
+    const modelMapping = buildAccountModelMapping()
     if (modelMapping) {
       credentials.model_mapping = modelMapping
     } else {
@@ -6105,7 +6129,7 @@ const handleGrokValidateRT = async (refreshTokenInput: string) => {
         const extra = grokOAuth.buildExtraInfo(tokenInfo)
         const accountName = refreshTokens.length > 1 ? `${form.name || tokenInfo.email || 'Grok OAuth Account'} #${i + 1}` : (form.name || tokenInfo.email || 'Grok OAuth Account')
 
-        const modelMapping = buildModelMappingObject(modelRestrictionMode.value, allowedModels.value, modelMappings.value)
+        const modelMapping = buildAccountModelMapping()
         if (modelMapping) {
           credentials.model_mapping = modelMapping
         }
@@ -6172,7 +6196,7 @@ const handleGrokImportSSO = async (ssoInput: string) => {
 
   const credentials: Record<string, unknown> = {}
   applyGrokOAuthUpstreamConfig(credentials)
-  const modelMapping = buildModelMappingObject(modelRestrictionMode.value, allowedModels.value, modelMappings.value)
+  const modelMapping = buildAccountModelMapping()
   if (modelMapping) {
     credentials.model_mapping = modelMapping
   }
@@ -6278,11 +6302,7 @@ const handleGrokAuthorizePassword = async (emailPasswordInput: string) => {
             ? `${form.name || tokenInfo.email || 'Grok OAuth Account'} #${i + 1}`
             : form.name || tokenInfo.email || 'Grok OAuth Account'
 
-        const modelMapping = buildModelMappingObject(
-          modelRestrictionMode.value,
-          allowedModels.value,
-          modelMappings.value
-        )
+        const modelMapping = buildAccountModelMapping()
         if (modelMapping) {
           credentials.model_mapping = modelMapping
         }
@@ -6371,7 +6391,7 @@ const handleOpenAIExchange = async (authCode: string) => {
 
     // Add model mapping for OpenAI OAuth accounts（透传模式下不应用）
     if (shouldCreateOpenAI && !isOpenAIModelRestrictionDisabled.value) {
-      const modelMapping = buildModelMappingObject(modelRestrictionMode.value, allowedModels.value, modelMappings.value)
+      const modelMapping = buildAccountModelMapping()
       if (modelMapping) {
         credentials.model_mapping = modelMapping
       }
@@ -6425,7 +6445,7 @@ const OPENAI_MOBILE_RT_CLIENT_ID = 'app_LlGpXReQgckcGGUo2JrYvtJK'
 const buildOpenAICodexImportCredentialExtras = (): Record<string, unknown> | null => {
   const credentials: Record<string, unknown> = {}
   if (!isOpenAIModelRestrictionDisabled.value) {
-    const modelMapping = buildModelMappingObject(modelRestrictionMode.value, allowedModels.value, modelMappings.value)
+    const modelMapping = buildAccountModelMapping()
     if (modelMapping) {
       credentials.model_mapping = modelMapping
     }
@@ -6653,7 +6673,7 @@ const handleOpenAIBatchRT = async (refreshTokenInput: string, clientId?: string)
 
         // Add model mapping for OpenAI OAuth accounts（透传模式下不应用）
         if (shouldCreateOpenAI && !isOpenAIModelRestrictionDisabled.value) {
-          const modelMapping = buildModelMappingObject(modelRestrictionMode.value, allowedModels.value, modelMappings.value)
+          const modelMapping = buildAccountModelMapping()
           if (modelMapping) {
             credentials.model_mapping = modelMapping
           }
