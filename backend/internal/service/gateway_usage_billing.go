@@ -502,13 +502,20 @@ func syncBalanceCacheAfterDeduction(ctx context.Context, p *postUsageBillingPara
 		}
 		return
 	}
+	if deps.billingCacheService.InflightReservationEnabled() {
+		// 在途预留开启时，计费完成后立即同步余额缓存，避免释放预留后缓存仍未扣减。
+		err := deps.billingCacheService.DeductBalanceCache(ctx, p.User.ID, p.Cost.ActualCost)
+		if err == nil {
+			return
+		}
+		logger.LegacyPrintf("service.gateway", "Warning: sync deduct balance cache failed for user %d, falling back to queue: %v", p.User.ID, err)
+	}
 	balanceDeducted := usageBillingBalanceDeducted(p, result)
 	if balanceDeducted > 0 {
 		deps.billingCacheService.QueueDeductBalance(p.User.ID, balanceDeducted)
 		return
 	}
 	if result != nil && result.GiftDeducted > 0 {
-		// Gift credit covered the charge, so only the aggregated available-balance cache changed.
 		_ = deps.billingCacheService.InvalidateUserBalance(ctx, p.User.ID)
 	}
 }

@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	customaccountdefaults "github.com/Wei-Shaw/sub2api/internal/custom/accountdefaults"
+	customaccountdefaultsroutes "github.com/Wei-Shaw/sub2api/internal/custom/accountdefaults/routes"
 	customactivityhandler "github.com/Wei-Shaw/sub2api/internal/custom/activity/handler"
 	customactivityroutes "github.com/Wei-Shaw/sub2api/internal/custom/activity/routes"
 	customactivityruntime "github.com/Wei-Shaw/sub2api/internal/custom/activity/runtime"
@@ -23,8 +25,6 @@ import (
 	customoauthapproutes "github.com/Wei-Shaw/sub2api/internal/custom/oauthapp/routes"
 	custompromptauditv2 "github.com/Wei-Shaw/sub2api/internal/custom/promptauditv2"
 	custompromptauditv2routes "github.com/Wei-Shaw/sub2api/internal/custom/promptauditv2/routes"
-	customaccountdefaults "github.com/Wei-Shaw/sub2api/internal/custom/accountdefaults"
-	customaccountdefaultsroutes "github.com/Wei-Shaw/sub2api/internal/custom/accountdefaults/routes"
 	customturnlog "github.com/Wei-Shaw/sub2api/internal/custom/turnlog"
 	customturnlogroutes "github.com/Wei-Shaw/sub2api/internal/custom/turnlog/routes"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
@@ -165,7 +165,7 @@ func registerRoutes(
 	routes.RegisterModelPlazaRoutes(v1, h, optionalJWTAuth, settingService, panelRateLimiter)
 	routes.RegisterAdminRoutes(v1, h, adminAuth, auditLog, stepUpAuth, settingService, panelRateLimiter)
 	routes.RegisterGatewayRoutes(r, h, apiKeyAuth, apiKeyService, subscriptionService, opsService, settingService, compositeResolver, cfg)
-	routes.RegisterPaymentRoutes(v1, h.Payment, h.PaymentWebhook, h.Admin.Payment, jwtAuth, adminAuth, auditLog, settingService, panelRateLimiter)
+	routes.RegisterPaymentRoutes(v1, h.Payment, h.PaymentWebhook, h.Admin.Payment, jwtAuth, adminAuth, auditLog, settingService, panelRateLimiter, redisClient)
 	registerCustomAnnouncementRoutes(v1, cfg.Pricing.DataDir, adminAuth, settingService)
 	registerCustomCallbackAuthRoutes(v1, customCallbackAuth, jwtAuth, settingService)
 	registerCustomInvoiceRoutes(v1, customInvoice, jwtAuth, adminAuth, settingService)
