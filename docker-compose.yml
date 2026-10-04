@@ -1,0 +1,13 @@
+services:
+  sub2api:
+    image: __IMAGE__
+    container_name: sub2api
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    env_file:
+      - .env
+    ports:
+      - "__BIND_HOST__:__SERVER_PORT__:8080"
+    volumes:
+      - "__DEPLOY_DIR__/data:/app/data"
