@@ -1,0 +1,151 @@
+version: 1
+
+# Sub2API 的 Pipewright 部署流水线。
+#
+# 以下敏感变量应配置在 Pipewright 项目 Vault 中：
+#   REGISTRY_USERNAME、REGISTRY_PASSWORD
+#   DEPLOY_SSH_HOST、DEPLOY_SSH_USER、DEPLOY_SSH_PRIVATE_KEY
+#
+# 默认镜像仓库和部署目录沿用现有 Jenkins 流水线约定。
+# 如需部署到其他环境，请在 Pipewright 项目变量中覆盖这些值。
+variables:
+  REGISTRY_HOST: registry.cn-shenzhen.aliyuncs.com
+  IMAGE_REPOSITORY: registry.cn-shenzhen.aliyuncs.com/wdaglb/sub2api-ex
+  IMAGE_TAG: ${PIPEWRIGHT_COMMIT_SHA}
+  DEPLOY_DIR: /www/sites/api.methink.cc/sub2api2
+  COMPOSE_PROJECT: sub2api
+
+stages:
+  - id: validate
+    name: validate
+    kind: build
+    jobs:
+      - id: validate_config
+        name: validate deployment configuration
+        type: script
+        script:
+          image: alpine:3.20
+          commands:
+            - |
+              set -eu
+              test -n "${REGISTRY_HOST}"
+              test -n "${IMAGE_REPOSITORY}"
+              test -n "${IMAGE_TAG}"
+              test -n "${DEPLOY_DIR}"
+              test -n "${COMPOSE_PROJECT}"
+
+  - id: test
+    name: test
+    kind: build
+    needs: [validate]
+    jobs:
+      - id: backend_tests
+        name: backend tests
+        type: script
+        script:
+          image: golang:1.25
+          workdir: /workspace/backend
+          commands:
+            - go test ./...
+
+      - id: frontend_checks
+        name: frontend checks
+        type: script
+        script:
+          image: node:22-bookworm
+          workdir: /workspace/frontend
+          commands:
+            - corepack enable
+            - pnpm install --frozen-lockfile
+            - pnpm run typecheck
+            - pnpm run check:i18n
+
+  - id: build_push
+    name: build and push image
+    kind: build
+    needs: [test]
+    jobs:
+      - id: docker_build_push
+        name: build and push Docker image
+        type: script
+        script:
+          image: docker:27-cli
+          commands:
+            - |
+              set -eu
+              image="${IMAGE_REPOSITORY}:${IMAGE_TAG}"
+              printf '%s' "${REGISTRY_PASSWORD}" | docker login "${REGISTRY_HOST}" --username "${REGISTRY_USERNAME}" --password-stdin
+              trap 'docker logout "${REGISTRY_HOST}" >/dev/null 2>&1 || true' EXIT
+              docker build --pull --tag "${image}" .
+              docker push "${image}"
+
+  - id: deploy
+    name: deploy production
+    kind: deploy_ssh
+    needs: [build_push]
+    gate: true
+    when:
+      branches: [main]
+    jobs:
+      - id: deploy_compose
+        name: deploy with Docker Compose
+        type: script
+        script:
+          image: alpine:3.20
+          commands:
+            - apk add --no-cache openssh-client
+            - |
+              set -eu
+              image="${IMAGE_REPOSITORY}:${IMAGE_TAG}"
+              mkdir -p ~/.ssh
+              printf '%s\n' "${DEPLOY_SSH_PRIVATE_KEY}" > ~/.ssh/id_rsa
+              chmod 600 ~/.ssh/id_rsa
+              ssh-keyscan -H "${DEPLOY_SSH_HOST}" >> ~/.ssh/known_hosts
+              export SSHPASS=''
+              ssh "${DEPLOY_SSH_USER}@${DEPLOY_SSH_HOST}" \
+                "IMAGE='${image}' DEPLOY_DIR='${DEPLOY_DIR}' COMPOSE_PROJECT='${COMPOSE_PROJECT}' /bin/sh -s" <<'REMOTE_SCRIPT'
+              set -eu
+
+              cd "$DEPLOY_DIR"
+              test -f .env || {
+                echo "missing production environment file: $DEPLOY_DIR/.env" >&2
+                exit 1
+              }
+              compose_file="$DEPLOY_DIR/docker-compose.yml"
+              test -f "$compose_file" || {
+                echo "missing compose file: $compose_file" >&2
+                exit 1
+              }
+
+              docker compose -p "$COMPOSE_PROJECT" -f "$compose_file" pull
+              docker compose -p "$COMPOSE_PROJECT" -f "$compose_file" up -d --force-recreate
+
+              running_status="$(docker inspect --format '{{.State.Running}}' sub2api)"
+              test "$running_status" = true || {
+                docker compose -p "$COMPOSE_PROJECT" -f "$compose_file" logs --tail 100 sub2api >&2 || true
+                exit 1
+              }
+              REMOTE_SCRIPT
+
+  - id: verify
+    name: verify deployment
+    kind: deploy_ssh
+    needs: [deploy]
+    when:
+      branches: [main]
+    jobs:
+      - id: verify_container
+        name: verify running container
+        type: script
+        script:
+          image: alpine:3.20
+          commands:
+            - apk add --no-cache openssh-client
+            - |
+              set -eu
+              mkdir -p ~/.ssh
+              printf '%s\n' "${DEPLOY_SSH_PRIVATE_KEY}" > ~/.ssh/id_rsa
+              chmod 600 ~/.ssh/id_rsa
+              ssh-keyscan -H "${DEPLOY_SSH_HOST}" >> ~/.ssh/known_hosts
+              ssh "${DEPLOY_SSH_USER}@${DEPLOY_SSH_HOST}" \
+                "docker inspect --format '{{.State.Running}}' sub2api | grep -qx true"
