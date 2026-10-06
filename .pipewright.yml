@@ -7,18 +7,23 @@ version: 1
 #   DEPLOY_SSH_HOST、DEPLOY_SSH_USER、DEPLOY_SSH_PRIVATE_KEY
 #
 # 默认镜像仓库和部署目录沿用现有 Jenkins 流水线约定。
-# 如需部署到其他环境，请在 Pipewright 项目变量中覆盖这些值。
-variables:
-  REGISTRY_HOST: registry.cn-shenzhen.aliyuncs.com
-  IMAGE_REPOSITORY: registry.cn-shenzhen.aliyuncs.com/wdaglb/sub2api-ex
-  IMAGE_TAG: ${PIPEWRIGHT_COMMIT_SHA}
-  DEPLOY_DIR: /www/sites/api.methink.cc/sub2api2
-  COMPOSE_PROJECT: sub2api
+# REGISTRY_HOST、IMAGE_REPOSITORY、IMAGE_TAG、DEPLOY_DIR、COMPOSE_PROJECT
+# 以及下方的账号凭据，由 Pipewright 项目环境变量或 Vault 注入。
 
 stages:
+  - id: source
+    name: 源码
+    kind: source
+    jobs:
+      - id: source_checkout
+        name: 获取源码
+        type: git_source
+        summary: 使用 Pipewright 当前运行分支的源码
+
   - id: validate
     name: validate
     kind: build
+    needs: [source]
     jobs:
       - id: validate_config
         name: validate deployment configuration
@@ -81,7 +86,7 @@ stages:
 
   - id: deploy
     name: deploy production
-    kind: deploy_ssh
+    kind: deploy
     needs: [build_push]
     gate: true
     when:
@@ -129,7 +134,7 @@ stages:
 
   - id: verify
     name: verify deployment
-    kind: deploy_ssh
+    kind: deploy
     needs: [deploy]
     when:
       branches: [main]
