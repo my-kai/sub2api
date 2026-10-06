@@ -66,29 +66,32 @@ stages:
             - pnpm run check:i18n
 
   - id: build_push
-    name: build and push image
+    name: 构建并推送镜像
     kind: build
     needs: [test]
     jobs:
-      - id: docker_build_push
-        name: build and push Docker image
-        type: script
-        script:
-          image: docker:27-cli
-          commands:
-            - |
-              set -eu
-              image="${IMAGE_REPOSITORY}:${IMAGE_TAG}"
-              printf '%s' "${REGISTRY_PASSWORD}" | docker login "${REGISTRY_HOST}" --username "${REGISTRY_USERNAME}" --password-stdin
-              trap 'docker logout "${REGISTRY_HOST}" >/dev/null 2>&1 || true' EXIT
-              docker build --pull --tag "${image}" .
-              docker push "${image}"
+      - id: docker_build
+        name: 构建 Docker 镜像
+        type: build_image
+        config:
+          artifactType: image
+          buildModel: dockerfile
+          dockerfilePath: Dockerfile
+          context: .
+        summary: 使用仓库根目录 Dockerfile 构建镜像产物
+      - id: docker_push
+        name: 推送 Docker 镜像
+        type: push_image
+        config:
+          registry: ${REGISTRY_HOST}
+          imageName: ${IMAGE_REPOSITORY}
+          tag: ${IMAGE_TAG}
+        summary: 将构建出的镜像产物推送到镜像仓库
 
   - id: deploy
     name: deploy production
     kind: deploy
     needs: [build_push]
-    gate: true
     when:
       branches: [main]
     jobs:
