@@ -70,23 +70,40 @@ stages:
     kind: build
     needs: [test]
     jobs:
-      - id: docker_build
-        name: 构建 Docker 镜像
-        type: build_image
+      - id: docker_build_push
+        name: 构建并推送 Docker 镜像
+        type: script
+        summary: 构建镜像、推送仓库并登记镜像引用产物
         config:
-          artifactType: image
-          buildModel: dockerfile
-          dockerfilePath: Dockerfile
-          context: .
-        summary: 使用仓库根目录 Dockerfile 构建镜像产物
-      - id: docker_push
-        name: 推送 Docker 镜像
-        type: push_image
-        config:
-          registry: ${REGISTRY_HOST}
-          imageName: ${IMAGE_REPOSITORY}
-          tag: ${IMAGE_TAG}
-        summary: 将构建出的镜像产物推送到镜像仓库
+          artifacts: '[{"path":".pipewright-artifacts/image-reference.txt","name":"Sub2API Docker 镜像"}]'
+        script:
+          image: docker:27-cli
+          commands:
+            - |
+              set -eu
+              image="${IMAGE_REPOSITORY}:${IMAGE_TAG}"
+              artifact_dir=".pipewright-artifacts"
+              artifact_file="${artifact_dir}/image-reference.txt"
+
+              test -n "${REGISTRY_HOST}"
+              test -n "${IMAGE_REPOSITORY}"
+              test -n "${IMAGE_TAG}"
+              test -n "${REGISTRY_USERNAME}"
+              test -n "${REGISTRY_PASSWORD}"
+
+              mkdir -p "${artifact_dir}"
+              printf '%s' "${REGISTRY_PASSWORD}" | docker login "${REGISTRY_HOST}" \
+                --username "${REGISTRY_USERNAME}" \
+                --password-stdin
+              trap 'docker logout "${REGISTRY_HOST}" >/dev/null 2>&1 || true' EXIT
+
+              docker build --pull --tag "${image}" .
+              docker push "${image}"
+
+              {
+                printf 'image=%s\n' "${image}"
+                printf 'commit=%s\n' "${PIPEWRIGHT_COMMIT_SHA:-unknown}"
+              } > "${artifact_file}"
 
   - id: deploy
     name: deploy production
