@@ -141,6 +141,7 @@ docs/custom/*
 !docs/custom/gift-credit.md
 !docs/custom/invoice.md
 !docs/custom/account-defaults.md
+!docs/custom/egress.md
 !docs/PAYMENT.md
 !docs/PAYMENT_CN.md
 !docs/ADMIN_PAYMENT_INTEGRATION_API.md

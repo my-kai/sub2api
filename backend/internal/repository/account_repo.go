@@ -273,8 +273,8 @@ func (r *accountRepository) GetByID(ctx context.Context, id int64) (*service.Acc
 }
 
 // GetByIDIncludingInactiveEgress is used by administrative and diagnostic
-// reads. It preserves stale proxy bindings for display/repair while runtime
-// GetByID continues to fail closed on inactive exits.
+// reads. It preserves stale proxy bindings and the stored schedulable setting;
+// runtime GetByID isolates unavailable exits and disables exitless accounts.
 func (r *accountRepository) GetByIDIncludingInactiveEgress(ctx context.Context, id int64) (*service.Account, error) {
 	return r.getByIDWithProxyPolicy(ctx, id, false)
 }
@@ -331,7 +331,6 @@ func (r *accountRepository) getByIDsWithProxyPolicy(ctx context.Context, ids []i
 	entAccounts, err := r.client.Account.
 		Query().
 		Where(dbaccount.IDIn(uniqueIDs...)).
-		WithProxy().
 		All(ctx)
 	if err != nil {
 		return nil, err
@@ -346,9 +345,23 @@ func (r *accountRepository) getByIDsWithProxyPolicy(ctx context.Context, ids []i
 	for _, acc := range entAccounts {
 		entByID[acc.ID] = acc
 		accountIDs = append(accountIDs, acc.ID)
+		if acc.ProxyID != nil {
+			proxyIDs = append(proxyIDs, *acc.ProxyID)
+		}
+		if ids, _, configured, err := customegress.ConfigFromExtra(acc.Extra); err != nil {
+			return nil, err
+		} else if configured {
+			proxyIDs = append(proxyIDs, ids...)
+		}
 	}
 
 	groupsByAccount, groupIDsByAccount, accountGroupsByAccount, err := r.loadAccountGroups(ctx, accountIDs)
+	if err != nil {
+		return nil, err
+	}
+	// Hydrate legacy and explicit exits through the same batched policy. A
+	// preloaded legacy edge used to bypass active-state checks in GetByIDs.
+	proxyMap, err := r.loadProxies(ctx, proxyIDs, requireActiveProxies)
 	if err != nil {
 		return nil, err
 	}
@@ -360,28 +373,11 @@ func (r *accountRepository) getByIDsWithProxyPolicy(ctx context.Context, ids []i
 			continue
 		}
 
-		// Prefer the preloaded proxy edge when available.
-		if entAcc.Edges.Proxy != nil {
-			out.Proxy = proxyEntityToService(entAcc.Edges.Proxy)
-			if !requireActiveProxies && (!out.Proxy.IsActive() || out.Proxy.IsExpired(time.Now())) && !strings.HasSuffix(out.Proxy.Name, inactiveEgressProxySuffix) {
-				out.Proxy.Name += inactiveEgressProxySuffix
-			}
+		if out.ProxyID != nil {
+			out.Proxy = proxyMap[*out.ProxyID]
 		}
-		if ids, includeLocal, configured, err := customegress.ConfigFromExtra(out.Extra); err != nil {
+		if err := hydrateAccountEgress(out, proxyMap, requireActiveProxies); err != nil {
 			return nil, err
-		} else if configured {
-			proxyIDs = append(proxyIDs, ids...)
-			out.EgressProxyIDs = append([]int64(nil), ids...)
-			out.EgressIncludeLocal = includeLocal
-		} else {
-			// A missing legacy proxy is still a configured proxy binding. Do not
-			// reinterpret that stale binding as direct traffic on admin reads.
-			out.EgressIncludeLocal = out.ProxyID == nil
-			if out.Proxy != nil {
-				out.EgressProxies = []*service.Proxy{out.Proxy}
-			} else if out.ProxyID != nil && !requireActiveProxies {
-				out.EgressProxyIDs = []int64{*out.ProxyID}
-			}
 		}
 
 		if groups, ok := groupsByAccount[entAcc.ID]; ok {
@@ -394,26 +390,6 @@ func (r *accountRepository) getByIDsWithProxyPolicy(ctx context.Context, ids []i
 			out.AccountGroups = ags
 		}
 		outByID[entAcc.ID] = out
-	}
-	if len(proxyIDs) > 0 {
-		proxyMap, err := r.loadProxies(ctx, proxyIDs, requireActiveProxies)
-		if err != nil {
-			return nil, err
-		}
-		for _, acc := range outByID {
-			for _, id := range acc.EgressProxyIDs {
-				proxy, ok := proxyMap[id]
-				if !ok || proxy == nil {
-					if !requireActiveProxies {
-						// Keep the configured ID so an admin usage read fails
-						// explicitly at egress selection instead of switching to direct.
-						continue
-					}
-					return nil, fmt.Errorf("account %d egress proxy %d not found", acc.ID, id)
-				}
-				acc.EgressProxies = append(acc.EgressProxies, proxy)
-			}
-		}
 	}
 
 	// Preserve input order (first occurrence), and ignore missing IDs.
@@ -3461,8 +3437,8 @@ func (r *accountRepository) accountsToService(ctx context.Context, accounts []*d
 }
 
 // accountsToServiceWithProxyPolicy hydrates accounts while keeping the proxy
-// validation policy explicit. Runtime/scheduler callers require active exits;
-// admin list callers may read stale bindings so they can correct them.
+// validation policy explicit. Runtime/scheduler callers retain only usable exits
+// without aborting the batch; admin reads retain stale bindings for repair.
 func (r *accountRepository) accountsToServiceWithProxyPolicy(ctx context.Context, accounts []*dbent.Account, requireActiveProxies bool) ([]service.Account, error) {
 	if len(accounts) == 0 {
 		return []service.Account{}, nil
@@ -3505,32 +3481,8 @@ func (r *accountRepository) accountsToServiceWithProxyPolicy(ctx context.Context
 				out.Proxy = proxy
 			}
 		}
-		if ids, includeLocal, configured, err := customegress.ConfigFromExtra(acc.Extra); err != nil {
+		if err := hydrateAccountEgress(out, proxyMap, requireActiveProxies); err != nil {
 			return nil, err
-		} else if configured {
-			out.EgressProxyIDs = append([]int64(nil), ids...)
-			out.EgressIncludeLocal = includeLocal
-			for _, id := range ids {
-				proxy, ok := proxyMap[id]
-				if !ok || proxy == nil {
-					if !requireActiveProxies {
-						// Keep the configured ID in the response even when its proxy row
-						// was removed, so the admin UI can repair the binding.
-						continue
-					}
-					return nil, fmt.Errorf("account %d egress proxy %d not found", out.ID, id)
-				}
-				out.EgressProxies = append(out.EgressProxies, proxy)
-			}
-		} else {
-			// A missing legacy proxy is still a configured proxy binding. Do not
-			// reinterpret that stale binding as direct traffic on admin reads.
-			out.EgressIncludeLocal = out.ProxyID == nil
-			if out.Proxy != nil {
-				out.EgressProxies = []*service.Proxy{out.Proxy}
-			} else if out.ProxyID != nil && !requireActiveProxies {
-				out.EgressProxyIDs = []int64{*out.ProxyID}
-			}
 		}
 		out.ProxyFallbackOriginID = acc.ProxyFallbackOriginID
 		if acc.ProxyFallbackOriginID != nil {
@@ -3554,6 +3506,25 @@ func (r *accountRepository) accountsToServiceWithProxyPolicy(ctx context.Context
 	return outAccounts, nil
 }
 
+// hydrateAccountEgress is a thin adapter shared by the full and optimized
+// account reads. It only changes the returned projection, never stored data.
+func hydrateAccountEgress(out *service.Account, proxyMap map[int64]*service.Proxy, requireActiveProxies bool) error {
+	ids, includeLocal, proxies, err := customegress.ResolvePool(out.Extra, out.ProxyID, proxyMap)
+	if err != nil {
+		return err
+	}
+	out.EgressProxyIDs = ids
+	out.EgressIncludeLocal = includeLocal
+	out.EgressProxies = proxies
+	if requireActiveProxies && !includeLocal && len(proxies) == 0 {
+		// Keep the account in event reads so its platform/groups can still be
+		// rebuilt and old sticky snapshots replaced. Selection fails closed,
+		// but a stale exit must not stall the outbox watermark for other accounts.
+		out.Schedulable = false
+	}
+	return nil
+}
+
 func tempUnschedulablePredicate() dbpredicate.Account {
 	return dbpredicate.Account(func(s *entsql.Selector) {
 		col := s.C("temp_unschedulable_until")
@@ -3575,8 +3546,9 @@ func notExpiredPredicate(now time.Time) dbpredicate.Account {
 // inactiveEgressProxySuffix marks stale exits in administrative account views.
 const inactiveEgressProxySuffix = "（失效）"
 
-// loadProxies loads configured proxies in batches. Active-state enforcement is
-// enabled for runtime hydration and disabled only for administrative reads.
+// loadProxies loads configured proxies in batches. Runtime hydration excludes
+// unavailable exits rather than failing the whole scheduler bucket; storage
+// errors still propagate. Administrative reads retain stale proxies for repair.
 func (r *accountRepository) loadProxies(ctx context.Context, proxyIDs []int64, requireActiveProxies bool) (map[int64]*service.Proxy, error) {
 	proxyMap := make(map[int64]*service.Proxy)
 	proxyIDs = uniquePositiveInt64s(proxyIDs)
@@ -3598,8 +3570,8 @@ func (r *accountRepository) loadProxies(ctx context.Context, proxyIDs []int64, r
 			if p == nil {
 				return nil, fmt.Errorf("egress proxy is nil")
 			}
-			if requireActiveProxies && (p.DeletedAt != nil || p.Status != service.StatusActive) {
-				return nil, fmt.Errorf("egress proxy %d is not active", p.ID)
+			if requireActiveProxies && !customegress.ProxyUsable(p.Status, p.DeletedAt, p.ExpiresAt, now) {
+				continue
 			}
 			proxy := proxyEntityToService(p)
 			if !requireActiveProxies && (!proxy.IsActive() || proxy.IsExpired(now)) && !strings.HasSuffix(proxy.Name, inactiveEgressProxySuffix) {
