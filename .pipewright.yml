@@ -9,6 +9,11 @@ version: 1
 # 默认镜像仓库和部署目录沿用现有 Jenkins 流水线约定。
 # REGISTRY_HOST、IMAGE_REPOSITORY、IMAGE_TAG、DEPLOY_DIR、COMPOSE_PROJECT
 # 以及下方的账号凭据，由 Pipewright 项目环境变量或 Vault 注入。
+#
+# 镜像版本号自动增长：实际镜像标签 = <IMAGE_TAG>.<UTC 时间戳>（如 1.0.20260105183000）。
+# IMAGE_TAG 仅作为版本基线（如 1.0），不再直接用作镜像标签。
+# 版本号在构建任务生成并写入产物 image-reference.txt；部署任务经 Pipewright
+# 跨阶段产物恢复读取同一份镜像引用，保证构建与部署用同一标签。
 
 stages:
   - id: source
@@ -35,6 +40,7 @@ stages:
               set -eu
               test -n "${REGISTRY_HOST}"
               test -n "${IMAGE_REPOSITORY}"
+              # IMAGE_TAG 是版本基线（如 1.0），实际镜像标签在其后追加时间戳自动增长。
               test -n "${IMAGE_TAG}"
               test -n "${DEPLOY_DIR}"
               test -n "${COMPOSE_PROJECT}"
@@ -81,15 +87,20 @@ stages:
           commands:
             - |
               set -eu
-              image="${IMAGE_REPOSITORY}:${IMAGE_TAG}"
-              artifact_dir=".pipewright-artifacts"
-              artifact_file="${artifact_dir}/image-reference.txt"
-
               test -n "${REGISTRY_HOST}"
               test -n "${IMAGE_REPOSITORY}"
               test -n "${IMAGE_TAG}"
               test -n "${REGISTRY_USERNAME}"
               test -n "${REGISTRY_PASSWORD}"
+
+              # 镜像标签 = 版本基线 + UTC 时间戳（秒级），每次构建自动增长。
+              # 用 UTC 避免构建机时区差异导致排序混乱；busybox date 不支持纳秒，秒级粒度下
+              # 同秒并发构建会重名（后推覆盖前镜像），项目并发上限设为 1 可彻底避免。
+              build_stamp="$(date -u +%Y%m%d%H%M%S)"
+              version="${IMAGE_TAG}.${build_stamp}"
+              image="${IMAGE_REPOSITORY}:${version}"
+              artifact_dir=".pipewright-artifacts"
+              artifact_file="${artifact_dir}/image-reference.txt"
 
               mkdir -p "${artifact_dir}"
               printf '%s' "${REGISTRY_PASSWORD}" | docker login "${REGISTRY_HOST}" \
@@ -100,9 +111,11 @@ stages:
               docker build --pull --tag "${image}" .
               docker push "${image}"
 
+              # 镜像引用登记为产物：部署任务经 Pipewright 跨阶段产物恢复在工作区原路径
+              # 读到本文件，确保构建与部署使用同一镜像标签（时间戳在两阶段各自取值不一致）。
               {
                 printf 'image=%s\n' "${image}"
-                printf 'commit=%s\n' "${PIPEWRIGHT_COMMIT_SHA:-unknown}"
+                printf 'version=%s\n' "${version}"
               } > "${artifact_file}"
 
   - id: deploy
@@ -121,7 +134,21 @@ stages:
             - apk add --no-cache openssh-client
             - |
               set -eu
-              image="${IMAGE_REPOSITORY}:${IMAGE_TAG}"
+              # 镜像引用由构建任务登记为产物（image-reference.txt），Pipewright 会把它恢复到
+              # 本阶段工作区原路径。必须读取该文件而非自行拼标签：版本号含构建时刻时间戳，
+              # 两阶段各自计算必然不一致。文件缺失直接失败，避免部署到错误镜像。
+              artifact_file=".pipewright-artifacts/image-reference.txt"
+              if [ ! -f "${artifact_file}" ]; then
+                echo "missing image reference artifact: ${artifact_file}" >&2
+                exit 1
+              fi
+              image="$(sed -n 's/^image=//p' "${artifact_file}" | head -n 1)"
+              if [ -z "${image}" ]; then
+                echo "image reference artifact has no image entry: ${artifact_file}" >&2
+                exit 1
+              fi
+              echo "deploy image: ${image}"
+
               mkdir -p ~/.ssh
               printf '%s\n' "${DEPLOY_SSH_PRIVATE_KEY}" > ~/.ssh/id_rsa
               chmod 600 ~/.ssh/id_rsa
