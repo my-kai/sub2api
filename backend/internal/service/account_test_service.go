@@ -367,6 +367,7 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 	if err != nil {
 		return s.sendErrorAndEnd(c, "Account not found")
 	}
+	bindAccountTestPlatform(c, account)
 	account = account.SelectEgressForRequest()
 
 	// Synthetic UI load-test accounts exercise the real SSE parsing and modal
@@ -422,6 +423,25 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 	}
 
 	return s.testClaudeAccountConnection(c, account, modelID)
+}
+
+func openCodeGoNativeProtocol(account *Account, model string) string {
+	model = strings.ToLower(strings.TrimSpace(model))
+	switch {
+	case strings.HasPrefix(model, "grok"), strings.HasPrefix(model, "gpt"), strings.Contains(model, "muse-spark"):
+		return APIProtocolResponses
+	case strings.HasPrefix(model, "minimax"), strings.HasPrefix(model, "qwen"):
+		return APIProtocolAnthropic
+	default:
+		return APIProtocolChatCompletions
+	}
+}
+
+func (s *AccountTestService) testModelRoutedAccountConnection(c *gin.Context, account *Account, modelID string, prompt string) error {
+	if account != nil && account.Platform == PlatformOpenCodeGo && IsOpenCodeUnsupportedModel(modelID) {
+		return writeOpenCodeUnsupportedModelError(c, false, modelID)
+	}
+	return s.testOpenCodeGoAccountConnection(c, account, modelID, prompt)
 }
 
 // testOpenCodeGoAccountConnection probes the native endpoint for the selected

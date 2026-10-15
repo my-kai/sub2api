@@ -21,6 +21,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	custommodelrateservice "github.com/Wei-Shaw/sub2api/internal/custom/modelratemultiplier/service"
+	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/xai"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
@@ -658,6 +659,8 @@ type ForwardResult struct {
 	ImageSizeBreakdown map[string]int
 	SearchCount        int
 	AudioUsage         *AudioUsage
+	// CacheStorageTokenHours 显式上下文缓存的存储量（缓存 token 数 × 存储小时数）。
+	CacheStorageTokenHours float64
 }
 
 // GatewayFailureStage identifies which request stage failed. The zero value is
@@ -705,6 +708,7 @@ type UpstreamFailoverError struct {
 	SameAccountRetryMax      int           // 可选的错误级同账号重试上限，低于 handler 默认预算时优先采用
 	RequestScopedTransient   bool          // 故障因素与账号无关（如上游按客户端身份/模型容量降载）：可同账号重试，但不得据此对账号做临时封禁
 	SafeToFailoverAfterWrite bool          // 仅写出 SSE 注释等非语义字节时，仍可在同一客户端流中切换账号
+	BoundUpstreamPassthrough bool          // 绑定显式缓存的请求在上游网关账号上收到的错误，原样回写
 	Stage                    GatewayFailureStage
 	Scope                    GatewayFailureScope
 	Reason                   GatewayFailureReason
@@ -767,6 +771,22 @@ func (s *GatewayService) TempUnscheduleRetryableError(ctx context.Context, accou
 	case http.StatusBadGateway:
 		tempUnscheduleEmptyResponse(ctx, s.accountRepo, accountID, "[handler]")
 	}
+}
+
+// GetCompositeRouteModels returns exact composite public models for an endpoint.
+func (s *GatewayService) GetCompositeRouteModels(ctx context.Context, groupID *int64, endpoint string, includeSystemOne bool) ([]string, error) {
+	if s == nil || s.compositeResolver == nil || groupID == nil {
+		return nil, nil
+	}
+	return s.compositeResolver.ListExactPublicModels(ctx, *groupID, endpoint, includeSystemOne)
+}
+
+// FilterCompositeCodexModels filters models that are not available through composite routes.
+func (s *GatewayService) FilterCompositeCodexModels(ctx context.Context, groupID int64, models []string) ([]string, error) {
+	if s == nil || s.compositeResolver == nil {
+		return models, nil
+	}
+	return s.compositeResolver.FilterCodexModels(ctx, groupID, models)
 }
 
 // GatewayService handles API gateway operations
@@ -1511,21 +1531,21 @@ func (s *GatewayService) resolveCompositeModelOwnership(ctx context.Context, gro
 		}
 	}
 
-	accounts, err := s.accountRepo.ListSchedulableByGroupID(ctx, groupID)
+	// 归属取决于配置而非运行时健康，避免限流状态导致路由所有权抖动。
+	accounts, err := s.accountRepo.ListModelAvailabilityCandidates(ctx, &groupID, domain.ConcretePlatformIDs(), false)
 	if err != nil {
 		return CompositeModelOwnership{}, err
 	}
 
 	platforms := make(map[string]struct{})
-	for _, account := range accounts {
-		platform := strings.TrimSpace(account.Platform)
-		if !isConcreteRequestPlatform(platform) || !explicitModelMappingClaims(account, model) {
-			continue
-		}
-		platforms[platform] = struct{}{}
-	}
-
 	ownership := CompositeModelOwnership{}
+	for _, account := range accounts {
+		if explicitModelMappingClaims(account, model) {
+			platforms[account.Platform] = struct{}{}
+			ownership.OpenAIGatewayOAuthClaimed = ownership.OpenAIGatewayOAuthClaimed ||
+				(account.IsOAuth() && domain.UsesOpenAIGateway(account.Platform))
+		}
+	}
 	if len(platforms) == 1 {
 		for platform := range platforms {
 			ownership.TargetPlatform = platform

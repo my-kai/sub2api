@@ -20,6 +20,7 @@ require (
 	github.com/dgraph-io/ristretto v0.2.0
 	github.com/gin-gonic/gin v1.9.1
 	github.com/go-oauth2/oauth2/v4 v4.5.4
+	github.com/go-playground/validator/v10 v10.14.0
 	github.com/go-webauthn/webauthn v0.17.4
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
