@@ -337,7 +337,17 @@ func resolveChatGPTSubscriptionAccountID(tokenInfo *OpenAITokenInfo, orgID strin
 
 // RefreshAccountToken refreshes token for an OpenAI OAuth account
 func (s *OpenAIOAuthService) RefreshAccountToken(ctx context.Context, account *Account) (*OpenAITokenInfo, error) {
+	if account == nil {
+		return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_OAUTH_INVALID_ACCOUNT", "account is required")
+	}
+
 	account = account.SelectEgressForRequest()
+	if account == nil {
+		// A configured egress may have become unavailable after the account was
+		// loaded. Treat it as an account-scoped refresh failure instead of
+		// dereferencing the nil request-scoped clone and crashing the worker.
+		return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_OAUTH_EGRESS_UNAVAILABLE", "no valid egress proxy available")
+	}
 	if account.Platform != PlatformOpenAI {
 		return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_OAUTH_INVALID_ACCOUNT", "account is not an OpenAI account")
 	}

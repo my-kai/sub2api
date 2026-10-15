@@ -32,6 +32,35 @@ func (s *openaiOAuthClientRefreshStub) RefreshTokenWithClientID(ctx context.Cont
 	return nil, errors.New("not implemented")
 }
 
+func TestOpenAIOAuthService_RefreshAccountToken_RejectsNilAccount(t *testing.T) {
+	svc := NewOpenAIOAuthService(nil, nil)
+	defer svc.Stop()
+
+	info, err := svc.RefreshAccountToken(context.Background(), nil)
+	require.Error(t, err)
+	require.Nil(t, info)
+	require.Contains(t, err.Error(), "account is required")
+}
+
+func TestOpenAIOAuthService_RefreshAccountToken_RejectsUnavailableEgress(t *testing.T) {
+	svc := NewOpenAIOAuthService(nil, nil)
+	defer svc.Stop()
+
+	account := &Account{
+		Platform:       PlatformOpenAI,
+		Type:           AccountTypeOAuth,
+		EgressProxyIDs: []int64{123},
+		Credentials: map[string]any{
+			"refresh_token": "refresh-token",
+		},
+	}
+
+	info, err := svc.RefreshAccountToken(context.Background(), account)
+	require.Error(t, err)
+	require.Nil(t, info)
+	require.Contains(t, err.Error(), "no valid egress proxy available")
+}
+
 func TestOpenAIOAuthService_RefreshAccountToken_NoRefreshTokenUsesExistingAccessToken(t *testing.T) {
 	client := &openaiOAuthClientRefreshStub{}
 	svc := NewOpenAIOAuthService(nil, client)
