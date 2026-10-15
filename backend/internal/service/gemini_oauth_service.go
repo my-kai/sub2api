@@ -731,7 +731,13 @@ func isNonRetryableGeminiOAuthError(err error) bool {
 }
 
 func (s *GeminiOAuthService) RefreshAccountToken(ctx context.Context, account *Account) (*GeminiTokenInfo, error) {
+	if account == nil {
+		return nil, fmt.Errorf("account is required")
+	}
 	account = account.SelectEgressForRequest()
+	if account == nil {
+		return nil, fmt.Errorf("no valid egress proxy available")
+	}
 	if account.Platform != PlatformGemini || account.Type != AccountTypeOAuth {
 		return nil, fmt.Errorf("account is not a Gemini OAuth account")
 	}

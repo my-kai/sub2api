@@ -44,6 +44,25 @@ func (s *grokOAuthClientStub) ConvertSSOToBuild(context.Context, string, string)
 	return s.ssoResponse, nil
 }
 
+func TestGrokOAuthServiceRefreshAccountTokenRejectsUnavailableEgress(t *testing.T) {
+	svc := NewGrokOAuthService(nil, &grokOAuthClientStub{})
+	defer svc.Stop()
+
+	account := &Account{
+		Platform:       PlatformGrok,
+		Type:           AccountTypeOAuth,
+		EgressProxyIDs: []int64{123},
+		Credentials: map[string]any{
+			"refresh_token": "refresh-token",
+		},
+	}
+
+	info, err := svc.RefreshAccountToken(context.Background(), account)
+	require.Error(t, err)
+	require.Nil(t, info)
+	require.Contains(t, err.Error(), "no valid egress proxy available")
+}
+
 func TestGrokOAuthServiceRefreshTokenPreservesOriginalRefreshTokenWhenNotRotated(t *testing.T) {
 	svc := NewGrokOAuthService(nil, &grokOAuthClientStub{
 		refreshResponse: &xai.TokenResponse{

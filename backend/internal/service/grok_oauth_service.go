@@ -316,6 +316,9 @@ func (s *GrokOAuthService) RefreshAccountToken(ctx context.Context, account *Acc
 		return nil, infraerrors.New(http.StatusBadRequest, "GROK_OAUTH_INVALID_ACCOUNT_TYPE", "account is not an OAuth account")
 	}
 	account = account.SelectEgressForRequest()
+	if account == nil {
+		return nil, infraerrors.New(http.StatusBadRequest, "GROK_OAUTH_EGRESS_UNAVAILABLE", "no valid egress proxy available")
+	}
 
 	proxyURL, err := s.proxyURL(ctx, account.ProxyID)
 	if err != nil {
