@@ -225,12 +225,41 @@
         <TextArea v-model="issueForm.admin_remark" label="备注" rows="3" required />
         <div>
           <label class="input-label mb-1.5 block">发票文件 <span class="text-red-500">*</span></label>
-          <input
-            type="file"
-            accept="application/pdf,.pdf"
-            class="block w-full text-sm text-gray-600 file:mr-4 file:rounded-lg file:border-0 file:bg-primary-50 file:px-4 file:py-2 file:text-sm file:font-medium file:text-primary-700 hover:file:bg-primary-100 dark:text-dark-300 dark:file:bg-primary-500/10 dark:file:text-primary-300"
-            @change="handleIssueFileChange"
-          />
+          <!-- 拖拽上传区域：拖放与点击选择共用同一个文件校验入口，避免两条路径行为不一致。 -->
+          <div
+            class="rounded-xl border-2 border-dashed px-4 py-6 text-center transition-colors"
+            :class="issueFileDragActive
+              ? 'border-primary-400 bg-primary-50 dark:border-primary-500 dark:bg-primary-500/10'
+              : 'border-gray-300 bg-gray-50 dark:border-dark-600 dark:bg-dark-800'"
+            @dragenter.prevent="issueFileDragActive = true"
+            @dragover.prevent="issueFileDragActive = true"
+            @dragleave.prevent="handleIssueFileDragLeave"
+            @drop.prevent="handleIssueFileDrop"
+          >
+            <!-- 已选文件：展示文件名与大小，并允许重新选择或移除。 -->
+            <template v-if="issueFile">
+              <p class="break-all text-sm font-medium text-gray-900 dark:text-white">{{ issueFile.name }}</p>
+              <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">{{ formatInvoiceFileSize(issueFile.size) }}</p>
+              <div class="mt-3 flex justify-center gap-2">
+                <label class="btn btn-secondary btn-sm cursor-pointer">
+                  <input type="file" accept="application/pdf,.pdf" class="hidden" @change="handleIssueFileChange" />
+                  重新选择
+                </label>
+                <button type="button" class="btn btn-secondary btn-sm text-red-600 hover:text-red-700 dark:text-red-400" @click="removeIssueFile">
+                  移除
+                </button>
+              </div>
+            </template>
+            <!-- 空态：拖拽提示与点击选择入口并存。 -->
+            <template v-else>
+              <Icon name="upload" size="lg" class="mx-auto text-gray-400 dark:text-dark-500" />
+              <p class="mt-2 text-sm text-gray-600 dark:text-dark-300">将 PDF 拖到此处，或点击选择文件</p>
+              <label class="btn btn-primary btn-sm mt-3 cursor-pointer">
+                <input type="file" accept="application/pdf,.pdf" class="hidden" @change="handleIssueFileChange" />
+                选择文件
+              </label>
+            </template>
+          </div>
           <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">仅支持 PDF，最大 10MB。</p>
         </div>
         <p v-if="issueError" class="text-sm text-red-600 dark:text-red-300">{{ issueError }}</p>
@@ -318,6 +347,7 @@ const detail = ref<InvoiceApplication | null>(null)
 const issueTarget = ref<InvoiceApplication | null>(null)
 const rejectTarget = ref<InvoiceApplication | null>(null)
 const issueFile = ref<File | null>(null)
+const issueFileDragActive = ref(false)
 const downloadingID = ref<number | null>(null)
 const exporting = ref(false)
 const testSending = ref(false)
@@ -344,6 +374,9 @@ const issueForm = reactive({
   invoice_number: '',
   admin_remark: '',
 })
+
+// 发票文件大小上限，与后端 invoice.MaxPDFSizeBytes 保持一致（10MB）。
+const issuePDFMaxSizeBytes = 10 * 1024 * 1024
 
 const statusOptions = computed(() => [
   { value: '', label: '全部状态' },
@@ -539,6 +572,9 @@ async function openDetail(app: InvoiceApplication): Promise<void> {
 /**
  * 打开标记开票弹窗。
  *
+ * 备注默认填订单号（商户订单号 out_trade_no 逗号拼接），多笔订单全部覆盖，
+ * 管理员可在此基础上手动删改；订单明细需要另拉详情接口获取。
+ *
  * @param app - 待处理申请。
  */
 function openIssueDialog(app: InvoiceApplication): void {
@@ -546,7 +582,28 @@ function openIssueDialog(app: InvoiceApplication): void {
   issueForm.invoice_number = ''
   issueForm.admin_remark = ''
   issueFile.value = null
+  issueFileDragActive.value = false
   issueError.value = ''
+  void fillIssueRemark(app)
+}
+
+/**
+ * 读取申请订单明细并填充默认备注。
+ *
+ * 拉取失败或弹窗已切换时不做填充，留给管理员手填，不阻塞开票流程。
+ *
+ * @param app - 待处理申请。
+ */
+async function fillIssueRemark(app: InvoiceApplication): Promise<void> {
+  try {
+    const full = await getAdminInvoiceApplication(app.id)
+    if (issueTarget.value?.id !== app.id) return
+    // 个别订单可能缺少 out_trade_no，回退为订单 #id，保证备注仍可对应到订单。
+    const orderNos = (full.orders || []).map(order => order.out_trade_no || `订单 #${order.order_id}`)
+    issueForm.admin_remark = orderNos.join(', ')
+  } catch {
+    // 详情读取失败不影响弹窗使用，备注由管理员自行填写。
+  }
 }
 
 /**
@@ -555,17 +612,72 @@ function openIssueDialog(app: InvoiceApplication): void {
 function closeIssueDialog(): void {
   issueTarget.value = null
   issueFile.value = null
+  issueFileDragActive.value = false
   issueError.value = ''
 }
 
 /**
- * 记录管理员选择的 PDF 文件。
+ * 校验并记录待上传的 PDF 文件。
+ *
+ * 拖拽路径绕过了 input 的 accept 限制，这里统一做扩展名和大小校验，
+ * 与后端 MaxPDFSizeBytes（10MB）保持一致，避免提交后才报错。
+ *
+ * @param file - 选中或拖入的文件。
+ */
+function applyIssueFile(file: File | null | undefined): void {
+  if (!file) return
+  const isPDF = file.name.toLowerCase().endsWith('.pdf') || file.type === 'application/pdf'
+  if (!isPDF) {
+    issueError.value = '发票文件仅支持 PDF'
+    return
+  }
+  if (file.size <= 0 || file.size > issuePDFMaxSizeBytes) {
+    issueError.value = '发票文件大小需在 10MB 以内'
+    return
+  }
+  issueError.value = ''
+  issueFile.value = file
+}
+
+/**
+ * 记录管理员通过文件选择器选择的 PDF 文件。
  *
  * @param event - 文件输入变更事件。
  */
 function handleIssueFileChange(event: Event): void {
   const input = event.target as HTMLInputElement
-  issueFile.value = input.files?.[0] || null
+  applyIssueFile(input.files?.[0])
+}
+
+/**
+ * 记录管理员拖拽进上传区域的 PDF 文件。
+ *
+ * @param event - 拖放事件，取第一个拖入的文件。
+ */
+function handleIssueFileDrop(event: DragEvent): void {
+  issueFileDragActive.value = false
+  applyIssueFile(event.dataTransfer?.files?.[0])
+}
+
+/**
+ * 仅在指针真正离开上传区域时取消高亮，避免在子元素间移动时闪烁。
+ *
+ * @param event - 拖拽离开事件。
+ */
+function handleIssueFileDragLeave(event: DragEvent): void {
+  const container = event.currentTarget as HTMLElement
+  const nextTarget = event.relatedTarget as Node | null
+  if (nextTarget && container.contains(nextTarget)) return
+  issueFileDragActive.value = false
+}
+
+/**
+ * 清除已选发票文件。
+ */
+function removeIssueFile(): void {
+  issueFile.value = null
+  issueFileDragActive.value = false
+  issueError.value = ''
 }
 
 /**
