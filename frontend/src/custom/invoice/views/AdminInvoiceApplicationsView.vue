@@ -768,7 +768,7 @@ function replaceApplication(updated: InvoiceApplication): void {
 }
 
 /**
- * 复制当前详情中的抬头快照，便于管理员粘贴到开票系统核对。
+ * 复制当前详情中的抬头快照和开票金额，便于管理员粘贴到开票系统核对。
  */
 async function copyTitleInfo(): Promise<void> {
   if (!detail.value) {
@@ -779,6 +779,7 @@ async function copyTitleInfo(): Promise<void> {
     `公司抬头：${detail.value.company_title}`,
     `税号：${detail.value.tax_number}`,
     `接收邮箱：${detail.value.receiver_email}`,
+    `金额：${formatInvoiceAmount(detail.value.total_amount, detail.value.currency)}`,
   ].join('\n')
   await copyToClipboard(text, '抬头信息已复制')
 }
